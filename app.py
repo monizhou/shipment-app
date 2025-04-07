@@ -1,21 +1,17 @@
-# 在代码开头增加云环境适配
+# -*- coding: utf-8 -*-
+"""钢筋发货监控系统（移动端优化版）"""
 import os
-
-DATA_PATH = os.path.join(os.path.dirname(__file__), "发货计划.xlsx")  # 使用相对路径
-
-import streamlit as st
-import pandas as pd
-import os
-from datetime import datetime
 import io
-
+from datetime import datetime
+import pandas as pd
+import streamlit as st
 
 # ==================== 系统配置 ====================
 class AppConfig:
     # 多路径配置（自动选择可用路径）
     DATA_PATHS = [
+        os.path.join(os.path.dirname(__file__), "发货计划.xlsx"),  # 优先使用相对路径
         r"F:\1.中铁物贸成都分公司-四川物供中心\钢材-结算\钢筋发货计划-发丁小刚\发货计划（宜宾项目）汇总.xlsx",
-        "发货计划.xlsx",
         r"D:\PyCharm\PycharmProjects\project\发货计划.xlsx"
     ]
     DATE_FORMAT = "%Y-%m-%d"
@@ -26,37 +22,59 @@ class AppConfig:
         '下单时间': ['创建时间', '日期', '录入时间']
     }
 
-
 # ==================== 样式设置 ====================
 def apply_card_styles():
-    """应用现代化卡片样式"""
+    """应用现代化卡片样式（已优化移动端）"""
     st.markdown("""
     <style>
-        /* 主容器顶格设置 */
+        /* 基础重置 */
+        * {
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        /* 主容器设置 */
         .main .block-container {
-            padding-top: 2rem;
-            padding-bottom: 2rem;
-            padding-left: 3rem;
-            padding-right: 3rem;
+            padding-top: 1.2rem;
+            padding-bottom: 1.2rem;
+            padding-left: 1rem;
+            padding-right: 1rem;
+            max-width: 100%;
+        }
+        
+        /* 标题优化 */
+        h1 {
+            font-size: 1.6rem !important;
+            margin-bottom: 0.8rem !important;
+        }
+        h2 {
+            font-size: 1.4rem !important;
+            margin-top: 1.2rem !important;
+        }
+        h3 {
+            font-size: 1.2rem !important;
         }
 
         /* 卡片样式优化 */
         .metric-container {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 1.5rem;
-            margin: 1rem 0 2rem 0;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 0.8rem;
+            margin: 0.5rem 0 1.2rem 0;
         }
         .metric-card {
             background: white;
-            border-radius: 10px;
-            padding: 1.5rem;
-            box-shadow: 0 2px 15px rgba(0,0,0,0.05);
-            transition: all 0.3s ease;
+            border-radius: 8px;
+            padding: 1rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            transition: all 0.2s ease;
             border-left: 4px solid;
             position: relative;
             overflow: hidden;
             height: 100%;
+        }
+        .metric-card:active {
+            transform: scale(0.98);
         }
         .metric-card.total {
             border-color: #3498db;
@@ -73,69 +91,144 @@ def apply_card_styles():
         .card-header {
             display: flex;
             align-items: center;
-            margin-bottom: 1rem;
+            margin-bottom: 0.6rem;
         }
         .card-icon {
-            font-size: 1.8rem;
-            margin-right: 0.8rem;
+            font-size: 1.4rem;
+            margin-right: 0.5rem;
         }
         .card-value {
-            font-size: 2rem;
+            font-size: 1.6rem;
             font-weight: 700;
-            margin: 0.5rem 0;
+            margin: 0.3rem 0;
+            line-height: 1.2;
         }
         .card-unit {
-            font-size: 1rem;
+            font-size: 0.85rem;
             font-weight: 400;
-            margin-left: 0.3rem;
+            margin-left: 0.2rem;
             opacity: 0.8;
         }
         .progress-container {
-            margin: 1rem 0;
+            margin: 0.6rem 0;
         }
         .progress-bar {
-            height: 6px;
+            height: 4px;
             background: #f0f0f0;
-            border-radius: 3px;
-            margin-top: 0.5rem;
+            border-radius: 2px;
+            margin-top: 0.3rem;
         }
         .progress-fill {
             height: 100%;
-            border-radius: 3px;
+            border-radius: 2px;
         }
         .card-footer {
-            font-size: 0.85rem;
+            font-size: 0.75rem;
             color: #7f8c8d;
-            margin-top: 0.5rem;
+            margin-top: 0.3rem;
         }
 
+        /* 表格优化 */
+        .stDataFrame {
+            border-radius: 6px;
+            box-shadow: 0 1px 5px rgba(0,0,0,0.05);
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        .stDataFrame table {
+            font-size: 14px;
+            width: 100%;
+        }
+        .stDataFrame th, .stDataFrame td {
+            padding: 0.5rem 0.8rem !important;
+        }
+        
         /* 预警样式 */
         .warning-board {
             background: #fff8e1;
             border-left: 4px solid #ffc107;
-            padding: 1rem;
-            margin: 1.5rem 0;
-            border-radius: 0 8px 8px 0;
+            padding: 0.8rem;
+            margin: 1rem 0;
+            border-radius: 0 6px 6px 0;
+        }
+        .warning-board h3 {
+            margin: 0 0 0.5rem 0 !important;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        /* 按钮优化 */
+        .stButton>button {
+            min-width: 120px;
+            padding: 0.5rem 1rem;
+            font-size: 0.9rem;
+            border-radius: 6px;
+        }
+        .stDownloadButton>button {
+            width: 100%;
         }
 
-        /* 表格样式 */
-        .stDataFrame {
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        /* 分割线优化 */
+        hr {
+            margin: 1.2rem 0 !important;
         }
 
         /* 移动端适配 */
         @media screen and (max-width: 768px) {
             .main .block-container {
-                padding: 1rem;
+                padding: 0.8rem;
             }
             .metric-container {
                 grid-template-columns: 1fr;
+                gap: 0.6rem;
+            }
+            .metric-card {
+                padding: 0.9rem;
+            }
+            .card-value {
+                font-size: 1.5rem;
+            }
+            .card-icon {
+                font-size: 1.2rem;
+            }
+            .warning-board {
+                padding: 0.7rem;
+            }
+            .stDataFrame table {
+                font-size: 13px;
+            }
+            h1 {
+                font-size: 1.4rem !important;
+            }
+            h2 {
+                font-size: 1.2rem !important;
+            }
+            h3 {
+                font-size: 1.1rem !important;
+            }
+        }
+        
+        /* 超小屏幕优化 */
+        @media screen and (max-width: 480px) {
+            .main .block-container {
+                padding: 0.6rem;
+            }
+            .metric-card {
+                padding: 0.8rem;
+            }
+            .card-value {
+                font-size: 1.3rem;
+            }
+            .card-header {
+                margin-bottom: 0.4rem;
+            }
+            .stDataFrame table {
+                font-size: 12px;
             }
         }
     </style>
     """, unsafe_allow_html=True)
-
 
 # ==================== 数据加载 ====================
 def find_data_file():
@@ -144,7 +237,6 @@ def find_data_file():
         if os.path.exists(path):
             return path
     return None
-
 
 @st.cache_data
 def load_data():
@@ -195,10 +287,9 @@ def load_data():
         st.error(f"数据加载失败: {str(e)}")
         return pd.DataFrame()
 
-
 # ==================== 卡片显示 ====================
 def display_metrics_cards(filtered_df):
-    """显示现代化统计卡片"""
+    """显示现代化统计卡片（移动端优化）"""
     if not filtered_df.empty:
         try:
             # 计算核心指标
@@ -273,14 +364,14 @@ def display_metrics_cards(filtered_df):
                             <div class="card-header">
                                 <div class="card-icon">{card['icon']}</div>
                                 <div style="flex-grow:1">
-                                    <div style="font-size:1rem;font-weight:600">{card['title']}</div>
+                                    <div style="font-size:0.95rem;font-weight:600">{card['title']}</div>
                                 </div>
                             </div>
                             <div class="card-value">
                                 {card['value']}<span class="card-unit">{card['unit']}</span>
                             </div>
                             <div class="progress-container">
-                                <div class="progress-label">{card.get('label', '')}</div>
+                                <div style="font-size:0.8rem;color:#666;">{card.get('label', '')}</div>
                                 <div class="progress-bar">
                                     <div class="progress-fill" style="width:{card['progress']}%; background-color:{card['color']}"></div>
                                 </div>
@@ -295,10 +386,9 @@ def display_metrics_cards(filtered_df):
         except Exception as e:
             st.error(f"指标卡片生成错误: {str(e)}")
 
-
 # ==================== 超期预警 ====================
 def show_overdue_warning(df):
-    """显示超期订单预警"""
+    """显示超期订单预警（移动端优化）"""
     overdue_df = df[df["超期天数"] > 0]
     if not overdue_df.empty:
         overdue_count = len(overdue_df)
@@ -308,44 +398,49 @@ def show_overdue_warning(df):
         st.markdown(f"""
         <div class="warning-board">
             <h3>🚨 超期预警 ({overdue_count}单)</h3>
-            <div style="display: flex; gap: 2rem; margin-top: 0.5rem;">
+            <div style="display: flex; gap: 1.5rem; margin-top: 0.5rem; flex-wrap: wrap;">
                 <div>
-                    <div style="font-size: 0.9rem; color: #666;">涉及标段</div>
-                    <div style="font-size: 1.2rem; font-weight: bold;">{project_count}个</div>
+                    <div style="font-size: 0.85rem; color: #666;">涉及标段</div>
+                    <div style="font-size: 1.1rem; font-weight: bold;">{project_count}个</div>
                 </div>
                 <div>
-                    <div style="font-size: 0.9rem; color: #666;">最大超期</div>
-                    <div style="font-size: 1.2rem; font-weight: bold; color: #e74c3c;">{max_overdue}天</div>
+                    <div style="font-size: 0.85rem; color: #666;">最大超期</div>
+                    <div style="font-size: 1.1rem; font-weight: bold; color: #e74c3c;">{max_overdue}天</div>
                 </div>
             </div>
         </div>
         """, unsafe_allow_html=True)
 
-
 # ==================== 主页面 ====================
 def main():
-    # 页面配置
+    # 页面配置 - 添加移动端优化参数
     st.set_page_config(
         layout="wide",
         page_title="钢筋发货监控系统",
         page_icon="🏗️",
+        initial_sidebar_state="collapsed",  # 移动端默认收起侧边栏
         menu_items={
             'Get Help': 'https://example.com',
             'About': "# 中铁物贸成都分公司\n钢筋发货监控系统 v3.4"
         }
     )
 
-    # 应用样式
+    # 应用优化后的样式
     apply_card_styles()
 
-    # 页面标题
+    # 添加视口元标签
+    st.markdown("""
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    """, unsafe_allow_html=True)
+
+    # 页面标题 - 优化移动端显示
     st.markdown(f"""
-    <div style="color:#2c3e50; padding-bottom:0.5rem; margin-bottom:1.5rem">
-        <h1 style="display:flex; align-items:center; gap:0.8rem; margin-bottom:0.5rem;">
+    <div style="color:#2c3e50; padding-bottom:0.3rem; margin-bottom:1rem">
+        <h1 style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.3rem;">
             <span>🏗️</span>
             <span>钢筋发货监控系统</span>
         </h1>
-        <div style="color:#7f8c8d; font-size:0.9rem">
+        <div style="color:#7f8c8d; font-size:0.85rem">
             更新时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}
         </div>
     </div>
@@ -374,7 +469,7 @@ def main():
 
     # 数据表格展示
     if not filtered_df.empty:
-        st.subheader("📋 发货明细")
+        st.subheader("📋 发货明细", divider="gray")
 
         # 定义显示列及格式
         display_cols = {
@@ -423,29 +518,33 @@ def main():
                 return ['background-color: #fff3e0'] * len(row)
             return [''] * len(row)
 
-        # 显示表格
-        st.dataframe(
-            display_df.style.apply(highlight_overdue, axis=1),
-            use_container_width=True,
-            height=600,
-            column_config=column_config
-        )
+        # 使用容器包装表格确保移动端可滚动
+        with st.container():
+            st.dataframe(
+                display_df.style.apply(highlight_overdue, axis=1),
+                use_container_width=True,
+                height=500,
+                column_config=column_config,
+                hide_index=True
+            )
 
         # 添加导出按钮
         st.divider()
-        if st.button("📥 导出当前数据"):
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                filtered_df.to_excel(writer, index=False)
-            st.download_button(
-                label="下载Excel文件",
-                data=buffer.getvalue(),
-                file_name=f"今日发货数据_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            if st.button("📥 导出当前数据", use_container_width=True):
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    filtered_df.to_excel(writer, index=False)
+                st.download_button(
+                    label="⬇️ 下载Excel文件",
+                    data=buffer.getvalue(),
+                    file_name=f"今日发货数据_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
     else:
         st.info("今日没有发货记录")
-
 
 # ==================== 程序入口 ====================
 if __name__ == "__main__":
