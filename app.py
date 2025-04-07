@@ -12,7 +12,7 @@ class AppConfig:
     DATA_PATHS = [
         os.path.join(os.path.dirname(__file__), "发货计划（宜宾项目）汇总.xlsx"),  # 优先使用相对路径
         r"F:\1.中铁物贸成都分公司-四川物供中心\钢材-结算\钢筋发货计划-发丁小刚\发货计划（宜宾项目）汇总.xlsx",
-        r"D:\PyCharm\PycharmProjects\project\发货计划.xlsx"
+        r"D:\PyCharm\PycharmProjects\project\发货计划（宜宾项目）汇总.xlsx"
     ]
     DATE_FORMAT = "%Y-%m-%d"
     REQUIRED_COLS = ['标段名称', '下单时间', '需求量']
