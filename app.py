@@ -64,6 +64,8 @@ def apply_card_styles():
             padding: 1rem;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
             border-left: 4px solid;
+            text-decoration: none; /* 防止链接下划线 */
+            color: inherit;
         }
         .metric-card.total { border-color: #3498db; }
         .metric-card.shipped { border-color: #2ecc71; }
@@ -164,11 +166,13 @@ def display_metrics_cards(filtered_df):
             with cols[idx]:
                 # 添加超期订单跳转链接
                 if card['type'] == 'overdue':
-                    st.markdown(f'<a href="?show_overdue=true" style="text-decoration: none; display: block;">',
-                                unsafe_allow_html=True)
+                    st.markdown(
+                        f'<a href="?show_overdue=true" style="text-decoration: none; display: block; color: inherit;">',
+                        unsafe_allow_html=True
+                    )
 
                 st.markdown(f"""
-                <div class="metric-card card-{card['type']}">
+                <div class="metric-card {card['type']}">
                     <div class="card-header">
                         <span style="font-size:1.5rem">{card['icon']}</span>
                         <span style="font-weight:600">{card['title']}</span>
@@ -199,8 +203,8 @@ def main():
     apply_card_styles()
     st.markdown('<meta name="viewport" content="width=device-width, initial-scale=1.0">', unsafe_allow_html=True)
 
-    # 处理URL参数（使用新API）
-    params = st.session_state.get('query_params', st.query_params)
+    # 直接使用 st.query_params（关键修复点）
+    params = st.query_params
     show_overdue = params.get('show_overdue', ['false'])[0].lower() == 'true'
 
     # 标题栏
@@ -220,7 +224,7 @@ def main():
     # 手动刷新按钮
     if st.button("🔄 手动刷新数据", use_container_width=True):
         st.cache_data.clear()
-        st.rerun()
+        st.experimental_rerun()
 
     # 数据加载
     df = load_data()
@@ -264,10 +268,10 @@ def main():
         else:
             st.write("暂无超期订单")
 
-        # 返回按钮（使用新API设置参数）
+        # 返回按钮（关键修复点：直接设置参数并强制刷新）
         if st.button("返回"):
-            st.query_params = {}  # 清除所有参数，返回主界面
-            st.experimental_rerun()  # 强制重新渲染
+            st.query_params = {}  # 清除参数
+            st.experimental_rerun()  # 强制刷新
 
     else:
         # 原始逻辑：显示今日数据
