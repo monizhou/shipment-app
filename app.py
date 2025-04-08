@@ -281,21 +281,9 @@ def main():
         # 显示统计卡片
         display_metrics_cards(filtered_df)
 
-# 在main()函数的数据表格部分添加以下格式化
-if not filtered_df.empty:
-    st.subheader("📋 发货明细", divider="gray")
-
-    # 确保数值列显示为整数
-    if "需求(吨)" in display_df.columns:
-        display_df["需求(吨)"] = display_df["需求(吨)"].astype(int)
-    if "已发(吨)" in display_df.columns:
-        display_df["已发(吨)"] = display_df["已发(吨)"].astype(int)
-    if "待发(吨)" in display_df.columns:
-        display_df["待发(吨)"] = display_df["待发(吨)"].astype(int)
-    if "超期天数" in display_df.columns:
-        display_df["超期天数"] = display_df["超期天数"].astype(int)
-
-
+        # 数据表格
+        if not filtered_df.empty:
+            st.subheader("📋 发货明细", divider="gray")
 
             display_cols = {
                 "标段名称": "工程标段",
