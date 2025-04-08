@@ -284,6 +284,15 @@ def main():
         # 数据表格
         if not filtered_df.empty:
             st.subheader("📋 发货明细", divider="gray")
+        # 确保数值列显示为整数
+    if "需求(吨)" in display_df.columns:
+        display_df["需求(吨)"] = display_df["需求(吨)"].astype(int)
+    if "已发(吨)" in display_df.columns:
+        display_df["已发(吨)"] = display_df["已发(吨)"].astype(int)
+    if "待发(吨)" in display_df.columns:
+        display_df["待发(吨)"] = display_df["待发(吨)"].astype(int)
+    if "超期天数" in display_df.columns:
+        display_df["超期天数"] = display_df["超期天数"].astype(int)
 
             display_cols = {
                 "标段名称": "工程标段",
