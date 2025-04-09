@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""钢筋发货监控系统（移动端优化版）"""
+"""钢筋发货监控系统（中铁总部视图版）"""
 import os
 import io
 import hashlib
@@ -35,10 +35,9 @@ def find_data_file():
 
 
 def apply_card_styles():
-    """应用响应式卡片样式"""
+    """应用卡片样式"""
     st.markdown("""
     <style>
-        /* 响应式卡片布局 */
         .metric-container {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -66,14 +65,14 @@ def apply_card_styles():
             font-size: 0.9rem;
             color: #666;
         }
-
-        /* 响应式表格 */
+        /* 移动端表格优化 */
         @media screen and (max-width: 768px) {
             .dataframe {
                 font-size: 12px;
             }
             .dataframe th, .dataframe td {
                 padding: 4px 8px;
+                white-space: nowrap;
             }
         }
     </style>
@@ -158,11 +157,9 @@ def show_project_selection(df):
     # 获取有效项目部列表（确保"中铁物贸成都分公司"在最前面）
     valid_projects = [p for p in df["项目部名称"].unique() if p != "未指定项目部"]
     valid_projects = sorted(valid_projects)
-    if "中铁物贸成都分公司" in valid_projects:
-        valid_projects.remove("中铁物贸成都分公司")
-        valid_projects.insert(0, "中铁物贸成都分公司")
 
-    options = ["所有项目部"] + valid_projects
+    # 添加总部选项
+    options = ["中铁物贸成都分公司"] + valid_projects
 
     selected = st.selectbox("选择项目部", options)
 
@@ -173,7 +170,7 @@ def show_project_selection(df):
 
 
 def display_metrics_cards(filtered_df):
-    """显示指标卡片（优化显示效果）"""
+    """显示指标卡片"""
     if filtered_df.empty:
         return
 
@@ -222,8 +219,8 @@ def show_data_panel(df, project):
         st.session_state.project_selected = False
         st.rerun()
 
-    # 筛选数据
-    filtered_df = df if project == "所有项目部" else df[df["项目部名称"] == project]
+    # 筛选数据（中铁物贸成都分公司查看所有数据）
+    filtered_df = df if project == "中铁物贸成都分公司" else df[df["项目部名称"] == project]
     today_df = filtered_df[filtered_df["下单时间"].dt.date == datetime.now().date()]
 
     if not today_df.empty:
@@ -235,6 +232,7 @@ def show_data_panel(df, project):
 
         # 准备显示列
         display_cols = {
+            "项目部名称": "项目部",
             "标段名称": "工程标段",
             "物资名称": "材料名称",
             "规格型号": "规格型号",
@@ -282,7 +280,7 @@ def show_data_panel(df, project):
             use_container_width=True
         )
     else:
-        st.info(f"{project}今日没有发货记录")
+        st.info(f"{'所有项目部' if project == '中铁物贸成都分公司' else project}今日没有发货记录")
 
 
 # ==================== 主程序 ====================
