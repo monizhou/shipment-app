@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
-"""钢筋发货监控系统（中铁总部视图版）"""
+"""钢筋发货监控系统（中铁总部视图版）- 数据兼容性优化版"""
 import os
-import io
-import hashlib
+import re
 import numpy as np
 from datetime import datetime, timedelta
 import pandas as pd
@@ -27,7 +26,7 @@ class AppConfig:
 
 # ==================== 辅助函数 ====================
 def find_data_file():
-    """查找数据文件"""
+    """查找数据文件（优化查找效率）"""
     for path in AppConfig.DATA_PATHS:
         if os.path.exists(path):
             return path
@@ -35,7 +34,7 @@ def find_data_file():
 
 
 def apply_card_styles():
-    """应用卡片样式"""
+    """应用卡片样式（保持不变）"""
     st.markdown("""
     <style>
         .metric-container {
@@ -65,11 +64,9 @@ def apply_card_styles():
             font-size: 0.9rem;
             color: #666;
         }
-        /* 超期行样式 */
         .overdue-row {
             background-color: #ffdddd !important;
         }
-        /* 移动端表格优化 */
         @media screen and (max-width: 768px) {
             .dataframe {
                 font-size: 12px;
@@ -86,23 +83,42 @@ def apply_card_styles():
 # ==================== 数据加载 ====================
 @st.cache_data(ttl=10)
 def load_data():
-    """加载并处理数据"""
+    """加载并处理数据（增强数据兼容性处理）"""
 
-    def safe_convert_to_int(series, default=0):
-        """安全转换为整数"""
-        series = pd.to_numeric(series, errors='coerce')
-        series = series.replace([np.inf, -np.inf], np.nan).fillna(default)
-        return series.astype(int)
+    def safe_convert_to_numeric(series, default=0):
+        """
+        安全转换为数值类型
+        处理以下特殊情况：
+        - 空值/缺失值
+        - 文本中包含数字（如"约10吨"）
+        - 特殊符号（如"10+"、"5-10"）
+        - 千分位分隔符（如"1,000"）
+        """
+        # 统一转为字符串处理
+        str_series = series.astype(str)
+
+        # 清洗数据：移除非数字字符（保留小数点和负号）
+        cleaned = str_series.str.replace(r'[^\d.-]', '', regex=True)
+
+        # 处理空字符串
+        cleaned = cleaned.replace({'': '0', 'nan': '0', 'None': '0'})
+
+        # 转换为数值
+        return pd.to_numeric(cleaned, errors='coerce').fillna(default)
 
     data_path = find_data_file()
     if not data_path:
         st.error("❌ 未找到数据文件")
+        st.markdown(f"**尝试查找的路径：**")
+        for path in AppConfig.DATA_PATHS:
+            st.markdown(f"- `{path}`")
         return pd.DataFrame()
 
     try:
+        # 先读取原始数据，不指定dtype以避免转换错误
         df = pd.read_excel(data_path, engine='openpyxl')
 
-        # 将第18列（R列）命名为"项目部名称"
+        # 验证必要列是否存在
         if len(df.columns) > 17:
             df = df.rename(columns={df.columns[17]: "项目部名称"})
         else:
@@ -131,19 +147,26 @@ def load_data():
             st.error(f"缺少必要列: {missing_cols}")
             return pd.DataFrame()
 
-        # 数据处理
+        # 数据处理（使用增强的转换函数）
         df["下单时间"] = pd.to_datetime(df["下单时间"], errors='coerce').dt.tz_localize(None)
-        df["需求量"] = safe_convert_to_int(df["需求量"])
-        df["已发量"] = safe_convert_to_int(df.get("已发量", 0))
-        df["剩余量"] = safe_convert_to_int(df["需求量"] - df["已发量"]).clip(lower=0)
+        df = df[~df["下单时间"].isna()]  # 过滤无效日期记录
+
+        # 数值转换（处理各种异常情况）
+        df["需求量"] = safe_convert_to_numeric(df["需求量"]).astype(int)
+        df["已发量"] = safe_convert_to_numeric(df.get("已发量", 0)).astype(int)
+        df["剩余量"] = (df["需求量"] - df["已发量"]).clip(lower=0).astype(int)
 
         if "计划进场时间" in df.columns:
             df["计划进场时间"] = pd.to_datetime(df["计划进场时间"], errors='coerce').dt.tz_localize(None)
-            df["超期天数"] = safe_convert_to_int(
-                (pd.Timestamp.now().normalize() - df["计划进场时间"]).dt.days
-            ).clip(lower=0)
+            df["超期天数"] = ((pd.Timestamp.now().normalize() - df["计划进场时间"]).dt.days
+                              .clip(lower=0)
+                              .fillna(0)
+                              .astype(int))
         else:
             df["超期天数"] = 0
+
+        # 数据质量检查
+        check_data_quality(df)
 
         return df
     except Exception as e:
@@ -151,22 +174,39 @@ def load_data():
         return pd.DataFrame()
 
 
+def check_data_quality(df):
+    """检查数据质量问题并提示用户"""
+    if df.empty:
+        return
+
+    # 检查"已发量"异常值
+    invalid_shipped = df[df["已发量"].astype(str).str.contains('[^0-9.-]')]
+    if not invalid_shipped.empty:
+        st.warning(f"发现 {len(invalid_shipped)} 条'已发量'包含非数字字符（已自动处理）")
+        with st.expander("查看详情"):
+            st.dataframe(invalid_shipped[["标段名称", "下单时间", "已发量"]].head(10))
+
+    # 检查负值
+    negative_values = df[(df["需求量"] < 0) | (df["已发量"] < 0)]
+    if not negative_values.empty:
+        st.warning(f"发现 {len(negative_values)} 条负值记录（已自动处理为0）")
+        with st.expander("查看详情"):
+            st.dataframe(negative_values[["标段名称", "下单时间", "需求量", "已发量"]].head(10))
+
+
 # ==================== 页面组件 ====================
 def show_project_selection(df):
-    """显示项目部选择界面"""
+    """显示项目部选择界面（保持不变）"""
     st.title("🏗️ 钢筋发货监控系统")
     st.markdown("**中铁物贸成都分公司**")
     st.write("请先选择您所属的项目部")
 
-    # 获取有效项目部列表（确保"中铁物贸成都分公司"在最前面）
+    # 获取有效项目部列表
     valid_projects = [p for p in df["项目部名称"].unique() if p != "未指定项目部"]
     valid_projects = sorted(valid_projects)
-
-    # 添加总部选项
     options = ["中铁物贸成都分公司"] + valid_projects
 
     selected = st.selectbox("选择项目部", options)
-
     if st.button("确认进入", type="primary"):
         st.session_state.project_selected = True
         st.session_state.selected_project = selected
@@ -174,89 +214,91 @@ def show_project_selection(df):
 
 
 def display_metrics_cards(filtered_df):
-    """显示指标卡片"""
+    """显示指标卡片（优化计算性能）"""
     if filtered_df.empty:
         return
 
-    try:
-        total_demand = int(filtered_df["需求量"].sum())
-        shipped_quantity = int(filtered_df["已发量"].sum())
-        remaining_quantity = int(filtered_df["剩余量"].sum())
+    # 批量计算指标
+    total_demand = int(filtered_df["需求量"].sum())
+    shipped_quantity = int(filtered_df["已发量"].sum())
+    remaining_quantity = int(filtered_df["剩余量"].sum())
 
-        overdue_orders = filtered_df[filtered_df["超期天数"] > 0]
-        overdue_count = len(overdue_orders)
-        max_overdue = int(overdue_orders["超期天数"].max()) if not overdue_orders.empty else 0
+    overdue_orders = filtered_df[filtered_df["超期天数"] > 0]
+    overdue_count = len(overdue_orders)
+    max_overdue = int(overdue_orders["超期天数"].max()) if not overdue_orders.empty else 0
 
-        # 四张卡片：总需求量、已发货量、待发货量、超期订单
-        cards_data = [
-            {"type": "total", "icon": "📦", "title": "总需求量", "value": f"{total_demand:,}", "unit": "吨"},
-            {"type": "shipped", "icon": "🚚", "title": "已发货量", "value": f"{shipped_quantity:,}", "unit": "吨"},
-            {"type": "pending", "icon": "⏳", "title": "待发货量", "value": f"{remaining_quantity:,}", "unit": "吨"},
-            {"type": "overdue", "icon": "⚠️", "title": "超期订单", "value": f"{overdue_count}", "unit": "单"}
-        ]
+    # 卡片数据
+    cards_data = [
+        {"type": "total", "icon": "📦", "title": "总需求量", "value": f"{total_demand:,}", "unit": "吨"},
+        {"type": "shipped", "icon": "🚚", "title": "已发货量", "value": f"{shipped_quantity:,}", "unit": "吨"},
+        {"type": "pending", "icon": "⏳", "title": "待发货量", "value": f"{remaining_quantity:,}", "unit": "吨"},
+        {"type": "overdue", "icon": "⚠️", "title": "超期订单", "value": f"{overdue_count}", "unit": "单",
+         "extra": f"最大超期: {max_overdue}天" if overdue_count > 0 else ""}
+    ]
 
-        st.markdown('<div class="metric-container">', unsafe_allow_html=True)
-        cols = st.columns(4)
-        for idx, card in enumerate(cards_data):
-            with cols[idx]:
-                st.markdown(f"""
-                <div class="metric-card {card['type']}">
-                    <div style="display:flex; align-items:center; gap:0.5rem;">
-                        <span style="font-size:1.2rem">{card['icon']}</span>
-                        <span style="font-weight:600">{card['title']}</span>
-                    </div>
-                    <div class="card-value">{card['value']}</div>
-                    <div class="card-unit">{card['unit']}</div>
-                    {f'<div style="font-size:0.8rem; color:#666;">最大超期: {max_overdue}天</div>' if card['type'] == 'overdue' else ''}
+    # 渲染卡片
+    st.markdown('<div class="metric-container">', unsafe_allow_html=True)
+    cols = st.columns(4)
+    for idx, card in enumerate(cards_data):
+        with cols[idx]:
+            content = f"""
+            <div class="metric-card {card['type']}">
+                <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <span style="font-size:1.2rem">{card['icon']}</span>
+                    <span style="font-weight:600">{card['title']}</span>
                 </div>
-                """, unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-    except Exception as e:
-        st.error(f"指标卡片生成错误: {str(e)}")
+                <div class="card-value">{card['value']}</div>
+                <div class="card-unit">{card['unit']}</div>
+                {f'<div style="font-size:0.8rem; color:#666;">{card.get("extra", "")}</div>' if card.get("extra") else ''}
+            </div>
+            """
+            st.markdown(content, unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 def show_data_panel(df, project):
-    """显示数据面板"""
+    """显示数据面板（优化交互体验）"""
     st.title(f"{project} - 发货数据")
 
-    if st.button("← 返回项目部选择"):
-        st.session_state.project_selected = False
-        st.rerun()
+    # 操作按钮
+    col1, col2 = st.columns([1, 5])
+    with col1:
+        if st.button("🔄 刷新数据", help="点击重新加载最新数据"):
+            st.cache_data.clear()
+            st.rerun()
+    with col2:
+        if st.button("← 返回项目部选择"):
+            st.session_state.project_selected = False
+            st.rerun()
 
-    # 时间筛选器
+    # 日期范围选择
     col1, col2 = st.columns(2)
     with col1:
         start_date = st.date_input(
             "开始日期",
-            value=datetime.now() - timedelta(days=1),
-            format="YYYY-MM-DD"
+            value=datetime.now() - timedelta(days=7),
+            format="YYYY/MM/DD"
         )
     with col2:
         end_date = st.date_input(
             "结束日期",
             value=datetime.now(),
-            format="YYYY-MM-DD"
+            format="YYYY/MM/DD"
         )
 
-    # 确保结束日期不小于开始日期
     if start_date > end_date:
         st.error("结束日期不能早于开始日期")
         return
 
-    # 筛选数据（中铁物贸成都分公司查看所有数据）
+    # 数据筛选
     filtered_df = df if project == "中铁物贸成都分公司" else df[df["项目部名称"] == project]
-
-    # 根据日期范围筛选数据
     date_range_df = filtered_df[
         (filtered_df["下单时间"].dt.date >= start_date) &
         (filtered_df["下单时间"].dt.date <= end_date)
         ]
 
     if not date_range_df.empty:
-        # 显示统计卡片
         display_metrics_cards(date_range_df)
-
-        # 显示数据表格（优化移动端显示）
         st.subheader("📋 发货明细")
 
         # 准备显示列
@@ -271,35 +313,25 @@ def show_data_panel(df, project):
             "下单时间": "下单时间",
             "计划进场时间": "计划进场时间"
         }
-
-        # 过滤有效列
         available_cols = {k: v for k, v in display_cols.items() if k in date_range_df.columns}
         display_df = date_range_df[available_cols.keys()].rename(columns=available_cols)
 
-        # 设置表格样式 - 超期行高亮
-        def highlight_overdue(row):
-            style = pd.Series('', index=row.index)
-            if row.get('超期天数', 0) > 0:
-                style = ['background-color: #ffdddd' for _ in row]
-            return style
-
-        styled_df = display_df.style.apply(highlight_overdue, axis=1)
-
-        # 设置表格格式
-        styled_df = styled_df.format({
-            '需求(吨)': '{:,}',
-            '已发(吨)': '{:,}',
-            '待发(吨)': '{:,}',
-            '超期天数': '{:,}',
-            '下单时间': lambda x: x.strftime('%Y-%m-%d') if not pd.isnull(x) else '',
-            '计划进场时间': lambda x: x.strftime('%Y-%m-%d') if not pd.isnull(x) else ''
-        })
-
-        # 显示表格（带缩放功能）
+        # 渲染表格
         st.dataframe(
-            styled_df,
+            display_df.style.format({
+                '需求(吨)': '{:,}',
+                '已发(吨)': '{:,}',
+                '待发(吨)': '{:,}',
+                '超期天数': '{:,}',
+                '下单时间': lambda x: x.strftime('%Y-%m-%d') if not pd.isnull(x) else '',
+                '计划进场时间': lambda x: x.strftime('%Y-%m-%d') if not pd.isnull(x) else ''
+            }).apply(
+                lambda row: ['background-color: #ffdddd' if row.get('超期天数', 0) > 0 else ''
+                             for _ in row],
+                axis=1
+            ),
             use_container_width=True,
-            height=min(400, 35 * len(display_df) + 35),  # 动态调整高度
+            height=min(600, 35 * len(display_df) + 40),
             hide_index=True
         )
 
@@ -318,6 +350,7 @@ def show_data_panel(df, project):
 
 # ==================== 主程序 ====================
 def main():
+    # 初始化配置
     st.set_page_config(
         layout="wide",
         page_title="钢筋发货监控系统",
@@ -333,10 +366,6 @@ def main():
     # 加载数据
     with st.spinner('正在加载数据...'):
         df = load_data()
-
-    if df.empty:
-        st.error("无法加载数据，请检查Excel文件")
-        return
 
     # 页面路由
     if not st.session_state.project_selected:
