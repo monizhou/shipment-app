@@ -4,7 +4,7 @@ import os
 import io
 import hashlib
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 import streamlit as st
 
@@ -64,6 +64,10 @@ def apply_card_styles():
         .card-unit {
             font-size: 0.9rem;
             color: #666;
+        }
+        /* 超期行样式 */
+        .overdue-row {
+            background-color: #ffdddd !important;
         }
         /* 移动端表格优化 */
         @media screen and (max-width: 768px) {
@@ -219,53 +223,81 @@ def show_data_panel(df, project):
         st.session_state.project_selected = False
         st.rerun()
 
+    # 时间筛选器
+    col1, col2 = st.columns(2)
+    with col1:
+        start_date = st.date_input(
+            "开始日期",
+            value=datetime.now() - timedelta(days=1),
+            format="YYYY-MM-DD"
+        )
+    with col2:
+        end_date = st.date_input(
+            "结束日期",
+            value=datetime.now(),
+            format="YYYY-MM-DD"
+        )
+
+    # 确保结束日期不小于开始日期
+    if start_date > end_date:
+        st.error("结束日期不能早于开始日期")
+        return
+
     # 筛选数据（中铁物贸成都分公司查看所有数据）
     filtered_df = df if project == "中铁物贸成都分公司" else df[df["项目部名称"] == project]
-    today_df = filtered_df[filtered_df["下单时间"].dt.date == datetime.now().date()]
 
-    if not today_df.empty:
+    # 根据日期范围筛选数据
+    date_range_df = filtered_df[
+        (filtered_df["下单时间"].dt.date >= start_date) &
+        (filtered_df["下单时间"].dt.date <= end_date)
+        ]
+
+    if not date_range_df.empty:
         # 显示统计卡片
-        display_metrics_cards(today_df)
+        display_metrics_cards(date_range_df)
 
         # 显示数据表格（优化移动端显示）
         st.subheader("📋 发货明细")
 
         # 准备显示列
         display_cols = {
-            "项目部名称": "项目部",
             "标段名称": "工程标段",
             "物资名称": "材料名称",
             "规格型号": "规格型号",
             "需求量": "需求(吨)",
             "已发量": "已发(吨)",
             "剩余量": "待发(吨)",
-            "超期天数": "超期天数"
+            "超期天数": "超期天数",
+            "下单时间": "下单时间",
+            "计划进场时间": "计划进场时间"
         }
 
         # 过滤有效列
-        available_cols = {k: v for k, v in display_cols.items() if k in today_df.columns}
-        display_df = today_df[available_cols.keys()].rename(columns=available_cols)
+        available_cols = {k: v for k, v in display_cols.items() if k in date_range_df.columns}
+        display_df = date_range_df[available_cols.keys()].rename(columns=available_cols)
 
-        # 设置表格样式
-        st.markdown("""
-        <style>
-            .stDataFrame {
-                width: 100%;
-                overflow-x: auto;
-            }
-            .stDataFrame table {
-                min-width: 100%;
-            }
-        </style>
-        """, unsafe_allow_html=True)
+        # 设置表格样式 - 超期行高亮
+        def highlight_overdue(row):
+            style = pd.Series('', index=row.index)
+            if row.get('超期天数', 0) > 0:
+                style = ['background-color: #ffdddd' for _ in row]
+            return style
+
+        styled_df = display_df.style.apply(highlight_overdue, axis=1)
+
+        # 设置表格格式
+        styled_df = styled_df.format({
+            '需求(吨)': '{:,}',
+            '已发(吨)': '{:,}',
+            '待发(吨)': '{:,}',
+            '超期天数': '{:,}',
+            '下单时间': lambda x: x.strftime('%Y-%m-%d') if not pd.isnull(x) else '',
+            '计划进场时间': lambda x: x.strftime('%Y-%m-%d') if not pd.isnull(x) else ''
+        })
 
         # 显示表格（带缩放功能）
         st.dataframe(
-            display_df.style.format({
-                '需求(吨)': '{:,}',
-                '已发(吨)': '{:,}',
-                '待发(吨)': '{:,}'
-            }),
+            styled_df,
             use_container_width=True,
             height=min(400, 35 * len(display_df) + 35),  # 动态调整高度
             hide_index=True
@@ -275,12 +307,13 @@ def show_data_panel(df, project):
         st.download_button(
             label="⬇️ 导出当前数据",
             data=display_df.to_csv(index=False).encode('utf-8-sig'),
-            file_name=f"{project}_发货数据_{datetime.now().strftime('%Y%m%d')}.csv",
+            file_name=f"{project}_发货数据_{start_date}_{end_date}.csv",
             mime="text/csv",
             use_container_width=True
         )
     else:
-        st.info(f"{'所有项目部' if project == '中铁物贸成都分公司' else project}今日没有发货记录")
+        st.info(
+            f"{'所有项目部' if project == '中铁物贸成都分公司' else project}在{start_date}至{end_date}期间没有发货记录")
 
 
 # ==================== 主程序 ====================
