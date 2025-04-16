@@ -23,6 +23,8 @@ class AppConfig:
         '需求量': ['需求吨位', '计划量', '数量'],
         '下单时间': ['创建时间', '日期', '录入时间']
     }
+    # 新增密码配置
+    PASSWORD = "123456"  # 默认密码，建议在生产环境中修改
 
 
 # ==================== 辅助函数 ====================
@@ -176,9 +178,19 @@ def show_project_selection(df):
     selected = st.selectbox("选择项目部", options)
 
     if st.button("确认进入", type="primary"):
-        st.session_state.project_selected = True
-        st.session_state.selected_project = selected
-        st.rerun()
+        if selected == "中铁物贸成都分公司":
+            # 显示密码输入框
+            password = st.text_input("请输入访问密码", type="password")
+            if password == AppConfig.PASSWORD:
+                st.session_state.project_selected = True
+                st.session_state.selected_project = selected
+                st.rerun()
+            elif password:  # 只有当密码不为空时才显示错误
+                st.error("密码错误，请重新输入")
+        else:
+            st.session_state.project_selected = True
+            st.session_state.selected_project = selected
+            st.rerun()
 
 
 def display_metrics_cards(filtered_df):
