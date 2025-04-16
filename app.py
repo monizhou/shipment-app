@@ -123,7 +123,8 @@ def check_data_quality(df):
 # ============== 页面组件 ===============
 def show_project_selection(df):
     st.title("🏗️ 钢筋发货监控系统")
-    st.markdown("中铁物贸成都分公司", style="color: #003366;")
+    st.markdown('<span style="color: #003366;">中铁物贸成都分公司</span>', 
+            unsafe_allow_html=True)
     
     valid_projects = sorted([p for p in df["项目部名称"].unique() if p != "未指定项目部"])
     options = ["中铁物贸成都分公司"] + valid_projects
