@@ -276,7 +276,7 @@ def show_data_panel(df, project):
     with col1:
         start_date = st.date_input(
             "开始日期",
-            value=datetime.now() - timedelta(days=7),
+            value=datetime.now() - timedelta(days=1),
             format="YYYY/MM/DD"
         )
     with col2:
