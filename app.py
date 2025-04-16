@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-"""钢筋发货监控系统（中铁总部视图版）- 数据兼容性优化版"""
+"""钢筋发货监控系统（中铁总部视图版）"""
 import os
-import re
+import io
+import hashlib
 import numpy as np
 from datetime import datetime, timedelta
 import pandas as pd
 import streamlit as st
-from hashlib import sha256  # 导入哈希模块
+
 
 # ==================== 系统配置 ====================
 class AppConfig:
@@ -22,8 +23,7 @@ class AppConfig:
         '需求量': ['需求吨位', '计划量', '数量'],
         '下单时间': ['创建时间', '日期', '录入时间']
     }
-    # 新增密码配置（使用SHA256加密存储，此处权限密码为 "admin123" 的哈希值）
-    ADMIN_PASSWORD_HASH = "202cb962ac59075b964b07152d234b70"  # 示例: "admin123" 的MD5哈希（此处用SHA256替换）
+
 
 # ==================== 辅助函数 ====================
 def find_data_file():
@@ -33,263 +33,339 @@ def find_data_file():
             return path
     return None
 
+
 def apply_card_styles():
-    """样式设置"""
+    """应用卡片样式"""
     st.markdown("""
     <style>
-    ...
+        .metric-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin: 1rem 0;
+        }
+        .metric-card {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 1rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            border-left: 4px solid;
+        }
+        .metric-card.total { border-color: #3498db; }
+        .metric-card.shipped { border-color: #2ecc71; }
+        .metric-card.pending { border-color: #f39c12; }
+        .metric-card.overdue { border-color: #e74c3c; }
+        .card-value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin: 0.5rem 0;
+            color: #333;
+        }
+        .card-unit {
+            font-size: 0.9rem;
+            color: #666;
+        }
+        /* 超期行样式 */
+        .overdue-row {
+            background-color: #ffdddd !important;
+        }
+        /* 移动端表格优化 */
+        @media screen and (max-width: 768px) {
+            .dataframe {
+                font-size: 12px;
+            }
+            .dataframe th, .dataframe td {
+                padding: 4px 8px;
+                white-space: nowrap;
+            }
+        }
     </style>
     """, unsafe_allow_html=True)
 
-def hash_password(password):
-    """密码加密"""
-    return sha256(password.encode('utf-8')).hexdigest()
 
-def check_admin_password(password):
-    """权限验证函数"""
-    hashed_input = hash_password(password)
-    return hashed_input == AppConfig.ADMIN_PASSWORD_HASH
-
-# ============== 数据加载模块（关键修正） ===============
+# ==================== 数据加载 ====================
 @st.cache_data(ttl=10)
 def load_data():
-    def safe_convert_to_numeric(series, default=0):
-        str_series = series.astype(str)
-        cleaned = str_series.str.replace(r'[^\d.-]', '', regex=True)
-        cleaned = cleaned.replace({'': '0', 'nan': '0', 'None': '0'})
-        return pd.to_numeric(cleaned, errors='coerce').fillna(default)
+    """加载并处理数据"""
+
+    def safe_convert_to_int(series, default=0):
+        """安全转换为整数"""
+        series = pd.to_numeric(series, errors='coerce')
+        series = series.replace([np.inf, -np.inf], np.nan).fillna(default)
+        return series.astype(int)
 
     data_path = find_data_file()
     if not data_path:
         st.error("❌ 未找到数据文件")
+        st.markdown(f"**尝试查找的路径：**")
+        for path in AppConfig.DATA_PATHS:
+            st.markdown(f"- `{path}`")
+        return pd.DataFrame()
+
+    if not os.access(data_path, os.R_OK):
+        st.error(f"文件无法读取：{data_path}")
         return pd.DataFrame()
 
     try:
         df = pd.read_excel(data_path, engine='openpyxl')
 
+        # 将第18列（R列）命名为"项目部名称"
         if len(df.columns) > 17:
             df = df.rename(columns={df.columns[17]: "项目部名称"})
         else:
-            st.error("文件格式错误: 缺少第18列（项目部名称）")
+            st.error("Excel文件缺少第18列（R列），请检查文件格式")
             return pd.DataFrame()
 
+        # 标准化处理
         df["项目部名称"] = df["项目部名称"].astype(str).str.strip()
-        df["项目部名称"] = df["项目部名称"].replace({"": "未指定项目部", None: "未指定项目部", float("nan"): "未指定项目部"})
+        df["项目部名称"] = df["项目部名称"].replace({
+            "": "未指定项目部",
+            "nan": "未指定项目部",
+            "None": "未指定项目部",
+            None: "未指定项目部"
+        })
 
-        # 列名映射处理
+        # 列名标准化
         for std_col, alt_cols in AppConfig.BACKUP_COL_MAPPING.items():
             for alt_col in alt_cols:
                 if alt_col in df.columns:
                     df.rename(columns={alt_col: std_col}, inplace=True)
                     break
 
+        # 必要列验证
         missing_cols = [col for col in AppConfig.REQUIRED_COLS if col not in df.columns]
         if missing_cols:
             st.error(f"缺少必要列: {missing_cols}")
             return pd.DataFrame()
 
-        df["下单时间"] = pd.to_datetime(df["下单时间"]).dt.tz_localize(None)
-        df = df[~df["下单时间"].isna()]
+        # 数据处理
+        df["下单时间"] = pd.to_datetime(df["下单时间"], errors='coerce').dt.tz_localize(None)
+        df = df[~df["下单时间"].isna()]  # 过滤无效日期记录
+        df["需求量"] = safe_convert_to_int(df["需求量"])
+        df["已发量"] = safe_convert_to_int(df.get("已发量", 0))
+        df["剩余量"] = safe_convert_to_int(df["需求量"] - df["已发量"]).clip(lower=0)
 
-        # 数值转换
-        df["需求量"] = safe_convert_to_numeric(df["需求量"]).astype(int)
-        df["已发量"] = safe_convert_to_numeric(df.get("已发量",0)).astype(int)
-        df["剩余量"] = (df["需求量"] - df["已发量"]).clip(lower=0).astype(int)
-
-        # 超期计算
         if "计划进场时间" in df.columns:
-            df["计划进场时间"] = pd.to_datetime(df["计划进场时间"]).dt.tz_localize(None)
-            df["超期天数"] = (pd.Timestamp.now().normalize() - df["计划进场时间"]).dt.days.clip(lower=0)
+            df["计划进场时间"] = pd.to_datetime(df["计划进场时间"], errors='coerce').dt.tz_localize(None)
+            df["超期天数"] = safe_convert_to_int(
+                (pd.Timestamp.now().normalize() - df["计划进场时间"]).dt.days
+            ).clip(lower=0)
         else:
             df["超期天数"] = 0
 
-        check_data_quality(df)
-
         return df
     except Exception as e:
-        st.error(f"加载失败: {str(e)}")
+        st.error(f"数据加载失败: {str(e)}")
         return pd.DataFrame()
 
-def check_data_quality(df):
-    """数据验证"""
-    invalid_shipped = df[pd.to_numeric(df["已发量"].astype(str), errors='coerce') < 0]
-    if not invalid_shipped.empty:
-        st.warning("检测到已发量为负值，请核对数据\n受影响记录：" + str(len(invalid_shipped)), icon='⚠️')
 
-    invalid_demand = df[df["需求量"] < 0]
-    if not invalid_demand.empty:
-        st.warning("检测到需求量为负值，请核对数据", icon='⚠️')
-
-# ============== 页面组件 ===============
+# ==================== 页面组件 ====================
 def show_project_selection(df):
+    """显示项目部选择界面"""
     st.title("🏗️ 钢筋发货监控系统")
-    st.markdown('<span style="color: #003366;">中铁物贸成都分公司</span>', 
-            unsafe_allow_html=True)
-    
-    valid_projects = sorted([p for p in df["项目部名称"].unique() if p != "未指定项目部"])
+    st.markdown("**中铁物贸成都分公司**")
+    st.write("请先选择您所属的项目部")
+
+    # 获取有效项目部列表（确保"中铁物贸成都分公司"在最前面）
+    valid_projects = [p for p in df["项目部名称"].unique() if p != "未指定项目部"]
+    valid_projects = sorted(valid_projects)
+
+    # 添加总部选项
     options = ["中铁物贸成都分公司"] + valid_projects
 
-    select_container = st.empty()
-    selected = select_container.selectbox("请选择项目部", options)
-    
-    # 处理总部选择的特殊逻辑
-    if selected == "中铁物贸成都分公司":
-        with st.form("password_form", clear_on_submit=True):
-            st.write("🔒 需要管理员权限访问总部数据")
-            password = st.text_input("请输入密码：", type="password", key="admin_password")
-            submitted = st.form_submit_button("验证权限")
-            
-            if submitted:
-                if check_admin_password(password.strip()):
-                    st.session_state["password_verified"] = True  # 更新状态
-                    st.session_state["project_selected"] = True
-                    st.session_state["selected_project"] = selected
-                    st.experimental_rerun()
-                else:
-                    st.error("❌ 密码错误，请重输！") 
-    else:
-        if st.button("确认进入", key="confirm_button", type="primary"):
-            st.session_state["project_selected"] = True
-            st.session_state["selected_project"] = selected
-            st.experimental_rerun()
+    selected = st.selectbox("选择项目部", options)
+
+    if st.button("确认进入", type="primary"):
+        st.session_state.project_selected = True
+        st.session_state.selected_project = selected
+        st.rerun()
+
+
+def display_metrics_cards(filtered_df):
+    """显示指标卡片"""
+    if filtered_df.empty:
+        return
+
+    try:
+        total_demand = int(filtered_df["需求量"].sum())
+        shipped_quantity = int(filtered_df["已发量"].sum())
+        remaining_quantity = int(filtered_df["剩余量"].sum())
+
+        overdue_orders = filtered_df[filtered_df["超期天数"] > 0]
+        overdue_count = len(overdue_orders)
+        max_overdue = int(overdue_orders["超期天数"].max()) if not overdue_orders.empty else 0
+
+        # 四张卡片：总需求量、已发货量、待发货量、超期订单
+        cards_data = [
+            {"type": "total", "icon": "📦", "title": "总需求量", "value": f"{total_demand:,}", "unit": "吨"},
+            {"type": "shipped", "icon": "🚚", "title": "已发货量", "value": f"{shipped_quantity:,}", "unit": "吨"},
+            {"type": "pending", "icon": "⏳", "title": "待发货量", "value": f"{remaining_quantity:,}", "unit": "吨"},
+            {"type": "overdue", "icon": "⚠️", "title": "超期订单", "value": f"{overdue_count}", "unit": "单"}
+        ]
+
+        st.markdown('<div class="metric-container">', unsafe_allow_html=True)
+        cols = st.columns(4)
+        for idx, card in enumerate(cards_data):
+            with cols[idx]:
+                st.markdown(f"""
+                <div class="metric-card {card['type']}">
+                    <div style="display:flex; align-items:center; gap:0.5rem;">
+                        <span style="font-size:1.2rem">{card['icon']}</span>
+                        <span style="font-weight:600">{card['title']}</span>
+                    </div>
+                    <div class="card-value">{card['value']}</div>
+                    <div class="card-unit">{card['unit']}</div>
+                    {f'<div style="font-size:0.8rem; color:#666;">最大超期: {max_overdue}天</div>' if card['type'] == 'overdue' else ''}
+                </div>
+                """, unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    except Exception as e:
+        st.error(f"指标卡片生成错误: {str(e)}")
+
 
 def show_data_panel(df, project):
-    st.title(f"{project} - 发货数据监控")
-    
-    # 返回按钮设计
-    col_left, col_right = st.columns([0.3, 0.7])
-    with col_left:
-        if st.button("⇦ 返回选择", use_container_width=True):
+    """显示数据面板"""
+    st.title(f"{project} - 发货数据")
+
+    # 添加刷新按钮
+    col1, col2 = st.columns([1, 5])
+    with col1:
+        if st.button("🔄 刷新数据", help="点击重新加载最新数据"):
+            st.cache_data.clear()
+            st.rerun()
+    with col2:
+        if st.button("← 返回项目部选择"):
             st.session_state.project_selected = False
-            st.experimental_rerun()
-    
-    # 日期筛选组件
-    col_start, col_end = st.columns(2)
-    with col_start:
-        start_date = st.date_input("起始时间", 
-            datetime.now() - timedelta(days=7), 
-            label_visibility="collapsed",
-            format="YYYY-MM-DD")
-    with col_end:
-        end_date = st.date_input("截止时间", 
-            datetime.now(), 
-            label_visibility="collapsed",
-            format="YYYY-MM-DD")
-    
+            st.rerun()
+
+    # 时间筛选器
+    col1, col2 = st.columns(2)
+    with col1:
+        start_date = st.date_input(
+            "开始日期",
+            value=datetime.now() - timedelta(days=1),
+            format="YYYY/MM/DD"
+        )
+    with col2:
+        end_date = st.date_input(
+            "结束日期",
+            value=datetime.now(),
+            format="YYYY/MM/DD"
+        )
+
+    # 确保结束日期不小于开始日期
     if start_date > end_date:
-        st.error("日期区间错误，请重新选择")
+        st.error("结束日期不能早于开始日期")
         return
-    
-    # 数据过滤
-    if project == "中铁物贸成都分公司":
-        filtered = df.copy()
-    else:
-        filtered = df[df["项目部名称"] == project]
-    
-    date_mask = (filtered["下单时间"].dt.date >= pd.to_datetime(start_date).date()) & \
-                (filtered["下单时间"].dt.date <= pd.to_datetime(end_date).date())
-    
-    display_df = filtered[date_mask].copy()
-    
-    # 展示核心指标
-    display_metrics_cards(display_df)
-    
-    # 展示明细数据
-    if not display_df.empty:
-        styled_df = display_df.style.format({
-            '需求量': '{:,.0f}吨',
-            '已发量': '{:,.0f}吨',
-            '剩余量': '{:,.0f}吨',
-            "下单时间": lambda x: x.strftime("%Y-%m-%d") if not pd.isnull(x) else "",
-            "计划进场时间": lambda x: x.strftime("%Y-%m-%d") if not pd.isnull(x) else ""
+
+    # 筛选数据（中铁物贸成都分公司查看所有数据）
+    filtered_df = df if project == "中铁物贸成都分公司" else df[df["项目部名称"] == project]
+
+    # 根据日期范围筛选数据
+    date_range_df = filtered_df[
+        (filtered_df["下单时间"].dt.date >= start_date) &
+        (filtered_df["下单时间"].dt.date <= end_date)
+        ]
+
+    if not date_range_df.empty:
+        # 显示统计卡片
+        display_metrics_cards(date_range_df)
+
+        # 显示数据表格（优化移动端显示）
+        st.subheader("📋 发货明细")
+
+        # 准备显示列
+        display_cols = {
+            "标段名称": "工程标段",
+            "物资名称": "材料名称",
+            "规格型号": "规格型号",
+            "需求量": "需求(吨)",
+            "已发量": "已发(吨)",
+            "剩余量": "待发(吨)",
+            "超期天数": "超期天数",
+            "下单时间": "下单时间",
+            "计划进场时间": "计划进场时间"
+        }
+
+        # 过滤有效列
+        available_cols = {k: v for k, v in display_cols.items() if k in date_range_df.columns}
+        display_df = date_range_df[available_cols.keys()].rename(columns=available_cols)
+
+        # 设置表格样式 - 超期行高亮
+        def highlight_overdue(row):
+            style = pd.Series('', index=row.index)
+            if row.get('超期天数', 0) > 0:
+                style = ['background-color: #ffdddd' for _ in row]
+            return style
+
+        styled_df = display_df.style.apply(highlight_overdue, axis=1)
+
+        # 设置表格格式
+        styled_df = styled_df.format({
+            '需求(吨)': '{:,}',
+            '已发(吨)': '{:,}',
+            '待发(吨)': '{:,}',
+            '超期天数': '{:,}',
+            '下单时间': lambda x: x.strftime('%Y-%m-%d') if not pd.isnull(x) else '',
+            '计划进场时间': lambda x: x.strftime('%Y-%m-%d') if not pd.isnull(x) else ''
         })
-        
-        styled_df.apply(lambda r: ['background: #FFD700' if r['超期天数'] > 0 else '' for _ in r], subset=['超期天数'], axis=1,)
-        
-        st.dataframe(styled_df, hide_index=True, use_container_width=True)
-        
-        # 数据导出按钮
-        csv = display_df.to_csv(index=False, encoding='utf_8_sig')
+
+        # 显示表格（带缩放功能）
+        st.dataframe(
+            styled_df,
+            use_container_width=True,
+            height=min(600, 35 * len(display_df) + 40),
+            hide_index=True,
+            column_config={
+                col: {"width": "auto"} for col in display_df.columns
+            }
+        )
+
+        # 数据导出
         st.download_button(
-            label="导出当前数据",
-            data=csv,
-            file_name=f"{project}_{start_date}_{end_date}.csv",
+            label="⬇️ 导出当前数据",
+            data=display_df.to_csv(index=False).encode('utf-8-sig'),
+            file_name=f"{project}_发货数据_{start_date}_{end_date}.csv",
             mime="text/csv",
             use_container_width=True
         )
     else:
-        st.info(f"无{start_date}至{end_date}间的记录")
-    
-# ============== 核心组件 ===============
-def display_metrics_cards(filtered):
-    if len(filtered) == 0:
-        return
-    
-    total_demand = filtered["需求量"].sum()
-    shipped = filtered["已发量"].sum()
-    remaining = filtered["剩余量"].sum()
-    
-    overdue = filtered["超期天数"] > 0
-    overdue_count = overdue.sum()
-    max_delay = filtered.loc[overdue, "超期天数"].max() if overdue.any() else 0
-        
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("总需求量", f"{total_demand:,.0f}", help="单位：吨", delta=None, label_visibility="visible")
-    
-    with col2:
-        st.metric("已发总量", f"{shipped:,.0f}", delta=f"{(shipped/total_demand*100):.0f}%", delta_color="off")
-    
-    with col3:
-        st.metric("待发总量", f"{remaining:,.0f}", delta=f"{(remaining/total_demand*100):.0f}%", delta_color="inverse")
-    
-    with col4:
-        st.metric("超期订单", f"{overdue_count}", delta=f"最严重：{max_delay}天", 
-                  delta_color="inverse" if max_delay >0 else "normal")
-        
-# ============== 主程序 ===============
+        st.info(
+            f"{'所有项目部' if project == '中铁物贸成都分公司' else project}在{start_date}至{end_date}期间没有发货记录")
+
+
+# ==================== 主程序 ====================
 def main():
     st.set_page_config(
-        page_title="钢筋监控系统",
         layout="wide",
-        initial_sidebar_state="collapsed",
-        menu_items={
-            'Report a bug': "mailto:admin@zhongtie.com",
-            'Get help': None
-        }
+        page_title="钢筋发货监控系统",
+        page_icon="🏗️",
+        initial_sidebar_state="expanded"
     )
-    
-    # 初始化状态变量
-    if "project_selected" not in st.session_state:
-        st.session_state["project_selected"] = False
-    
-    if "password_verified" not in st.session_state:
-        st.session_state["password_verified"] = False
-    
-    if "selected_project" not in st.session_state:
-        st.session_state["selected_project"] = ""
-    
-    df = load_data()
     apply_card_styles()
-    
-    # 权限路由控制
-    if st.session_state["project_selected"]:
-        current_project = st.session_state["selected_project"]
-        
-        # 特殊权限检查
-        if current_project == "中铁物贸成都分公司" and not st.session_state["password_verified"]:
-            st.error("权限不足！请从初始页面重新选择并验证权限")
-            st.session_state["project_selected"] = False
-            st.experimental_rerun()
-            
-        show_data_panel(df, current_project)
-    else:
+
+    # 初始化session状态
+    if 'project_selected' not in st.session_state:
+        st.session_state.project_selected = False
+
+    # 加载数据（带进度条）
+    with st.spinner('正在加载数据...'):
+        progress_bar = st.progress(0)
+        df = load_data()
+        progress_bar.progress(100)
+
+    if df.empty:
+        st.error("无法加载数据，请检查Excel文件")
+        return
+
+    # 页面路由
+    if not st.session_state.project_selected:
         show_project_selection(df)
+    else:
+        show_data_panel(df, st.session_state.selected_project)
+
 
 if __name__ == "__main__":
-    # Windows terminal字符编码设置（国内用户建议保留）
     if os.name == 'nt':
         os.system('chcp 65001 > nul')
-    
     main()
