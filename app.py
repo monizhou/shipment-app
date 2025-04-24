@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 import requests
 import hashlib
+import json
 
 
 # ==================== 系统配置 ====================
@@ -33,12 +34,12 @@ class AppConfig:
         '下单时间': ['创建时间', '日期', '录入时间']
     }
     WEBHOOK_URL = "https://open.feishu.cn/open-apis/bot/v2/hook/dcf16af3-78d2-433f-9c3d-b4cd108c7b60"
-
-    LOGISTICS_DATE_RANGE_DAYS = 5  # 默认显示最近10天物流数据
+    LOGISTICS_DATE_RANGE_DAYS = 10  # 默认显示最近10天物流数据
 
     # 新增配置项
     LOGISTICS_STATUS_FILE = "logistics_status.csv"  # 物流状态独立存储文件
-    STATUS_OPTIONS = ["","已到货", "未到货"]  # 支持三种状态
+    STATUS_OPTIONS = [" ", "已到货", "未到货"]  # 支持三种状态
+    PROJECT_COLUMN = "项目部名称"  # 项目部列名统一配置
 
 
 # ==================== 辅助函数 ====================
@@ -80,6 +81,51 @@ def generate_record_id(row):
     return hashlib.md5("|".join(key_fields).encode('utf-8')).hexdigest()
 
 
+def send_feishu_notification(material_info):
+    """发送飞书通知"""
+    message = {
+        "msg_type": "interactive",
+        "card": {
+            "config": {"wide_screen_mode": True},
+            "elements": [{
+                "tag": "div",
+                "text": {
+                    "content": f"**物资名称**: {material_info['物资名称']}\n"
+                               f"**规格型号**: {material_info['规格型号']}\n"
+                               f"**数量**: {material_info['数量']}\n"
+                               f"**交货时间**: {material_info['交货时间']}\n"
+                               f"**项目部**: {material_info['项目部']}",
+                    "tag": "lark_md"
+                }
+            }, {
+                "tag": "hr"
+            }, {
+                "tag": "note",
+                "elements": [{
+                    "content": "⚠️ 该物资状态已更新为【未到货】，请及时跟进",
+                    "tag": "plain_text"
+                }]
+            }],
+            "header": {
+                "template": "red",
+                "title": {
+                    "content": "【物流状态更新通知】",
+                    "tag": "plain_text"
+                }
+            }
+        }
+    }
+
+    try:
+        response = requests.post(AppConfig.WEBHOOK_URL,
+                                 data=json.dumps(message),
+                                 headers={'Content-Type': 'application/json'})
+        return response.status_code == 200
+    except Exception as e:
+        st.error(f"飞书通知发送失败: {str(e)}")
+        return False
+
+
 # ==================== 数据加载 ====================
 @st.cache_data(ttl=10)
 def load_data():
@@ -115,7 +161,8 @@ def load_data():
         df["物资名称"] = df["物资名称"].astype(str).str.strip().replace({
             "": "未指定物资", "nan": "未指定物资", "None": "未指定物资", None: "未指定物资"})
 
-        df["项目部名称"] = df.iloc[:, 17].astype(str).str.strip().replace({
+        # 统一使用配置的项目部列名
+        df[AppConfig.PROJECT_COLUMN] = df.iloc[:, 17].astype(str).str.strip().replace({
             "": "未指定项目部", "nan": "未指定项目部", "None": "未指定项目部", None: "未指定项目部"})
 
         df["下单时间"] = pd.to_datetime(df["下单时间"], errors='coerce').dt.tz_localize(None)
@@ -221,13 +268,20 @@ def merge_logistics_with_status(logistics_df):
     return merged.drop(columns=["到货状态_status"])
 
 
-def update_logistics_status(record_id, new_status):
+def update_logistics_status(record_id, new_status, original_row=None):
     """更新物流状态（支持三种状态）"""
     status_df = load_logistics_status()
 
     # 处理空置状态（空格）
     if new_status.strip() == "":
         new_status = " "  # 统一用空格表示空置
+
+    # 检查状态是否从非"未到货"变为"未到货"
+    send_notification = False
+    if new_status == "未到货":
+        existing_status = status_df.loc[status_df["record_id"] == record_id, "到货状态"]
+        if len(existing_status) == 0 or existing_status.iloc[0] != "未到货":
+            send_notification = True
 
     # 更新或添加记录
     if record_id in status_df["record_id"].values:
@@ -247,6 +301,16 @@ def update_logistics_status(record_id, new_status):
 
     # 保存更新
     if save_logistics_status(status_df):
+        if send_notification and original_row is not None:
+            # 准备通知信息
+            material_info = {
+                "物资名称": original_row["物资名称"],
+                "规格型号": original_row["规格型号"],
+                "数量": original_row["数量"],
+                "交货时间": original_row["交货时间"].strftime("%Y-%m-%d %H:%M"),
+                "项目部": original_row["项目部"]
+            }
+            send_feishu_notification(material_info)
         return True
     return False
 
@@ -256,8 +320,16 @@ def show_project_selection(df):
     st.title("🏗️ 钢筋发货监控系统")
     st.markdown("**中铁物贸成都分公司**")
 
-    valid_projects = sorted([p for p in df["项目部名称"].unique() if p != "未指定项目部"])
-    selected = st.selectbox("选择项目部", ["中铁物贸成都分公司"] + valid_projects)
+    # 获取有效项目部列表（排除未指定项目部）
+    valid_projects = sorted([p for p in df[AppConfig.PROJECT_COLUMN].unique()
+                             if p != "未指定项目部"])
+
+    # 项目选择器（中铁物贸成都分公司始终在首位）
+    selected = st.selectbox(
+        "选择项目部",
+        ["中铁物贸成都分公司"] + valid_projects,
+        key="project_selector"
+    )
 
     if st.button("确认进入", type="primary"):
         st.session_state.project_selected = True
@@ -324,6 +396,8 @@ def show_logistics_tab(project):
 
     # 加载并合并物流数据
     logistics_df = load_logistics_data()
+
+    # 根据选择项目过滤数据
     if project != "中铁物贸成都分公司":
         logistics_df = logistics_df[logistics_df["项目部"] == project]
 
@@ -376,7 +450,9 @@ def show_logistics_tab(project):
                     for idx in changed_indices:
                         record_id = filtered_df.iloc[idx]["record_id"]
                         new_status = edited_df.iloc[idx]["到货状态"]
-                        if update_logistics_status(record_id, new_status):
+                        original_row = filtered_df.iloc[idx]
+
+                        if update_logistics_status(record_id, new_status, original_row):
                             success_count += 1
 
                     if success_count > 0:
@@ -414,14 +490,15 @@ def show_data_panel(df, project):
     with tab1:
         col1, col2 = st.columns(2)
         with col1:
-            start_date = st.date_input("开始日期", datetime.now() - timedelta(days=0))
+            start_date = st.date_input("开始日期", datetime.now() - timedelta(days=30))
         with col2:
             end_date = st.date_input("结束日期", datetime.now())
 
         if start_date > end_date:
             st.error("日期范围无效")
         else:
-            filtered_df = df if project == "中铁物贸成都分公司" else df[df["项目部名称"] == project]
+            # 根据选择项目过滤数据
+            filtered_df = df if project == "中铁物贸成都分公司" else df[df[AppConfig.PROJECT_COLUMN] == project]
             date_range_df = filtered_df[
                 (filtered_df["下单时间"].dt.date >= start_date) &
                 (filtered_df["下单时间"].dt.date <= end_date)
