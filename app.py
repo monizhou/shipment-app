@@ -34,7 +34,7 @@ class AppConfig:
         '下单时间': ['创建时间', '日期', '录入时间']
     }
     WEBHOOK_URL = "https://open.feishu.cn/open-apis/bot/v2/hook/dcf16af3-78d2-433f-9c3d-b4cd108c7b60"
-    LOGISTICS_DATE_RANGE_DAYS = 10  # 默认显示最近10天物流数据
+    LOGISTICS_DATE_RANGE_DAYS = 5  # 默认显示最近10天物流数据
 
     # 新增配置项
     LOGISTICS_STATUS_FILE = "logistics_status.csv"  # 物流状态独立存储文件
@@ -490,7 +490,7 @@ def show_data_panel(df, project):
     with tab1:
         col1, col2 = st.columns(2)
         with col1:
-            start_date = st.date_input("开始日期", datetime.now() - timedelta(days=30))
+            start_date = st.date_input("开始日期", datetime.now() - timedelta(days=0))
         with col2:
             end_date = st.date_input("结束日期", datetime.now())
 
