@@ -22,7 +22,7 @@ class AppConfig:
     LOGISTICS_SHEET_NAME = "物流明细"
     LOGISTICS_COLUMNS = [
         "钢厂", "物资名称", "规格型号", "单位", "数量",
-        "交货时间", "交货地点", "联系人", "联系方式", "项目部",
+        "交货时间", "收货地址", "联系人", "联系方式", "项目部",
         "到货状态"
     ]
 
@@ -34,12 +34,31 @@ class AppConfig:
         '下单时间': ['创建时间', '日期', '录入时间']
     }
     WEBHOOK_URL = "https://open.feishu.cn/open-apis/bot/v2/hook/dcf16af3-78d2-433f-9c3d-b4cd108c7b60"
-    LOGISTICS_DATE_RANGE_DAYS = 5  # 默认显示最近10天物流数据
+    LOGISTICS_DATE_RANGE_DAYS = 5
 
-    # 新增配置项
-    LOGISTICS_STATUS_FILE = "logistics_status.csv"  # 物流状态独立存储文件
-    STATUS_OPTIONS = [" ", "已到货", "未到货"]  # 支持三种状态
-    PROJECT_COLUMN = "项目部名称"  # 项目部列名统一配置
+    LOGISTICS_STATUS_FILE = "logistics_status.csv"
+    STATUS_OPTIONS = [ "已到货", "未到货"]
+    PROJECT_COLUMN = "项目部名称"
+
+
+
+    CARD_STYLES = {
+        "hover_shadow": "0 8px 16px rgba(0,0,0,0.2)",
+        "glass_effect": """
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+        """,
+        "number_animation": """
+            @keyframes countup {
+                from { opacity: 0; transform: translateY(10px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+        """
+    }
 
 
 # ==================== 辅助函数 ====================
@@ -51,26 +70,47 @@ def find_data_file():
 
 
 def apply_card_styles():
-    st.markdown("""
+    st.markdown(f"""
     <style>
-        .metric-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin: 1rem 0; }
-        .metric-card { background: #f8f9fa; border-radius: 8px; padding: 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.1); border-left: 4px solid; }
-        .metric-card.total { border-color: #3498db; }
-        .metric-card.shipped { border-color: #2ecc71; }
-        .metric-card.pending { border-color: #f39c12; }
-        .metric-card.overdue { border-color: #e74c3c; }
-        .card-value { font-size: 1.5rem; font-weight: bold; margin: 0.5rem 0; color: #333; }
-        .card-unit { font-size: 0.9rem; color: #666; }
-        .overdue-row { background-color: #ffdddd !important; }
-        .status-arrived { background-color: #ddffdd !important; }
-        .status-not-arrived { background-color: #ffdddd !important; }
-        .status-empty { background-color: #f0f0f0 !important; }
+        {AppConfig.CARD_STYLES['number_animation']}
+
+        .metric-container {{ 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); 
+            gap: 1rem; 
+            margin: 1rem 0; 
+        }}
+        .metric-card {{
+            {AppConfig.CARD_STYLES['glass_effect']}
+            transition: all 0.3s ease;
+            padding: 1.5rem;
+        }}
+        .metric-card:hover {{
+            transform: translateY(-5px);
+            box-shadow: {AppConfig.CARD_STYLES['hover_shadow']};
+        }}
+        .card-value {{
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(45deg, #2c3e50, #3498db);
+            -webkit-background-clip: text;
+            color: transparent;
+            animation: countup 0.8s ease-out;
+            margin: 0.5rem 0;
+        }}
+        .card-unit {{
+            font-size: 0.9rem;
+            color: #666;
+        }}
+        .overdue-row {{ background-color: #ffdddd !important; }}
+        .status-arrived {{ background-color: #ddffdd !important; }}
+        .status-not-arrived {{ background-color: #ffdddd !important; }}
+        .status-empty {{ background-color: transparent !important; }}
     </style>
     """, unsafe_allow_html=True)
 
 
 def generate_record_id(row):
-    """为物流记录生成唯一ID"""
     key_fields = [
         str(row["钢厂"]),
         str(row["物资名称"]),
@@ -82,7 +122,6 @@ def generate_record_id(row):
 
 
 def send_feishu_notification(material_info):
-    """发送飞书通知"""
     message = {
         "msg_type": "interactive",
         "card": {
@@ -115,11 +154,12 @@ def send_feishu_notification(material_info):
             }
         }
     }
-
     try:
-        response = requests.post(AppConfig.WEBHOOK_URL,
-                                 data=json.dumps(message),
-                                 headers={'Content-Type': 'application/json'})
+        response = requests.post(
+            AppConfig.WEBHOOK_URL,
+            data=json.dumps(message),
+            headers={'Content-Type': 'application/json'}
+        )
         return response.status_code == 200
     except Exception as e:
         st.error(f"飞书通知发送失败: {str(e)}")
@@ -143,25 +183,21 @@ def load_data():
     try:
         df = pd.read_excel(data_path, engine='openpyxl')
 
-        # 列名标准化
         for std_col, alt_cols in AppConfig.BACKUP_COL_MAPPING.items():
             for alt_col in alt_cols:
                 if alt_col in df.columns and std_col not in df.columns:
                     df.rename(columns={alt_col: std_col}, inplace=True)
                     break
 
-        # 验证必要列
         REQUIRED_COLS = ['标段名称', '物资名称', '下单时间', '需求量']
         missing_cols = [col for col in REQUIRED_COLS if col not in df.columns]
         if missing_cols:
             st.error(f"缺少必要列: {missing_cols}")
             return pd.DataFrame()
 
-        # 数据处理
         df["物资名称"] = df["物资名称"].astype(str).str.strip().replace({
             "": "未指定物资", "nan": "未指定物资", "None": "未指定物资", None: "未指定物资"})
 
-        # 统一使用配置的项目部列名
         df[AppConfig.PROJECT_COLUMN] = df.iloc[:, 17].astype(str).str.strip().replace({
             "": "未指定项目部", "nan": "未指定项目部", "None": "未指定项目部", None: "未指定项目部"})
 
@@ -193,26 +229,22 @@ def load_logistics_data():
     try:
         df = pd.read_excel(data_path, sheet_name=AppConfig.LOGISTICS_SHEET_NAME, engine='openpyxl')
 
-        # 标准化列
         for col in AppConfig.LOGISTICS_COLUMNS:
             if col not in df.columns:
                 df[col] = "" if col != "数量" else 0
 
-        # 确保关键字段不为空
         df["物资名称"] = df["物资名称"].astype(str).str.strip().replace({
             "": "未指定物资", "nan": "未指定物资", "None": "未指定物资", None: "未指定物资"})
         df["钢厂"] = df["钢厂"].astype(str).str.strip().replace({
             "": "未指定钢厂", "nan": "未指定钢厂", "None": "未指定钢厂", None: "未指定钢厂"})
         df["项目部"] = df["项目部"].astype(str).str.strip().replace({
-            "": "未指定项目部", "nan": "未指定项目部", "None": "未指定项目部", None: "未指定项目部"})
+            "未指定项目部": "", "nan": "", "None": "", None: ""})
 
         df["数量"] = pd.to_numeric(df["数量"], errors="coerce").fillna(0)
         df["交货时间"] = pd.to_datetime(df["交货时间"], errors="coerce")
         df["联系方式"] = df["联系方式"].astype(str)
 
-        # 生成记录ID
         df["record_id"] = df.apply(generate_record_id, axis=1)
-
         return df[AppConfig.LOGISTICS_COLUMNS + ["record_id"]]
     except Exception as e:
         st.error(f"物流数据加载失败: {str(e)}")
@@ -221,10 +253,8 @@ def load_logistics_data():
 
 # ==================== 物流状态管理 ====================
 def load_logistics_status():
-    """加载独立的物流状态记录"""
     if os.path.exists(AppConfig.LOGISTICS_STATUS_FILE):
         status_df = pd.read_csv(AppConfig.LOGISTICS_STATUS_FILE)
-        # 确保必要的列存在
         if "record_id" not in status_df.columns:
             status_df["record_id"] = ""
         if "update_time" not in status_df.columns:
@@ -234,7 +264,6 @@ def load_logistics_status():
 
 
 def save_logistics_status(status_df):
-    """保存物流状态到独立文件"""
     try:
         status_df.to_csv(AppConfig.LOGISTICS_STATUS_FILE, index=False, encoding='utf-8-sig')
         return True
@@ -244,17 +273,14 @@ def save_logistics_status(status_df):
 
 
 def merge_logistics_with_status(logistics_df):
-    """将物流数据与状态记录合并"""
     if logistics_df.empty:
         return logistics_df
 
-    # 加载状态记录
     status_df = load_logistics_status()
     if status_df.empty:
-        logistics_df["到货状态"] = " "  # 默认空置状态
+        logistics_df["到货状态"] = " "
         return logistics_df
 
-    # 合并状态
     merged = pd.merge(
         logistics_df,
         status_df[["record_id", "到货状态"]],
@@ -262,36 +288,33 @@ def merge_logistics_with_status(logistics_df):
         how="left",
         suffixes=("", "_status")
     )
-
-    # 优先使用状态文件中的值，默认为空置
-    merged["到货状态"] = merged["到货状态_status"].fillna(" ")
+    merged["到货状态"] = merged["到货状态_status"].fillna("")  # 使用空字符串填充
     return merged.drop(columns=["到货状态_status"])
 
 
 def update_logistics_status(record_id, new_status, original_row=None):
-    """更新物流状态（支持三种状态）"""
     status_df = load_logistics_status()
 
-    # 处理空置状态（空格）
-    if new_status.strip() == "":
-        new_status = " "  # 统一用空格表示空置
+    # 修复点：处理 None 值和类型转换
+    if new_status is None:
+        new_status = ""
+    new_status = str(new_status).strip()  # 确保转换为字符串
 
-    # 检查状态是否从非"未到货"变为"未到货"
+    # 后续代码保持不变...
     send_notification = False
     if new_status == "未到货":
         existing_status = status_df.loc[status_df["record_id"] == record_id, "到货状态"]
         if len(existing_status) == 0 or existing_status.iloc[0] != "未到货":
             send_notification = True
 
-    # 更新或添加记录
     if record_id in status_df["record_id"].values:
-        if new_status == " ":  # 如果是空置则删除记录
+        if new_status == " ":
             status_df = status_df[status_df["record_id"] != record_id]
-        else:  # 否则更新记录
+        else:
             status_df.loc[status_df["record_id"] == record_id, "到货状态"] = new_status
             status_df.loc[status_df["record_id"] == record_id, "update_time"] = datetime.now().strftime(
                 AppConfig.DATE_FORMAT)
-    elif new_status != " ":  # 只添加非空置记录
+    elif new_status != " ":
         new_record = pd.DataFrame([{
             "record_id": record_id,
             "到货状态": new_status,
@@ -299,10 +322,8 @@ def update_logistics_status(record_id, new_status, original_row=None):
         }])
         status_df = pd.concat([status_df, new_record], ignore_index=True)
 
-    # 保存更新
     if save_logistics_status(status_df):
         if send_notification and original_row is not None:
-            # 准备通知信息
             material_info = {
                 "物资名称": original_row["物资名称"],
                 "规格型号": original_row["规格型号"],
@@ -310,7 +331,8 @@ def update_logistics_status(record_id, new_status, original_row=None):
                 "交货时间": original_row["交货时间"].strftime("%Y-%m-%d %H:%M"),
                 "项目部": original_row["项目部"]
             }
-            send_feishu_notification(material_info)
+            if send_feishu_notification(material_info):
+                st.toast("已发送物流异常通知到相关负责人", icon="📨")
         return True
     return False
 
@@ -320,21 +342,60 @@ def show_project_selection(df):
     st.title("🏗️ 钢筋发货监控系统")
     st.markdown("**中铁物贸成都分公司**")
 
-    # 获取有效项目部列表（排除未指定项目部）
-    valid_projects = sorted([p for p in df[AppConfig.PROJECT_COLUMN].unique()
-                             if p != "未指定项目部"])
+    logistics_df = load_logistics_data()
+    valid_projects = sorted([p for p in logistics_df["项目部"].unique() if p != ""])
 
-    # 项目选择器（中铁物贸成都分公司始终在首位）
     selected = st.selectbox(
         "选择项目部",
         ["中铁物贸成都分公司"] + valid_projects,
         key="project_selector"
     )
 
+    # ========== 新增密码验证逻辑 ==========
     if st.button("确认进入", type="primary"):
-        st.session_state.project_selected = True
-        st.session_state.selected_project = selected
+        if selected == "中铁物贸成都分公司":
+            st.session_state.temp_selected_project = selected
+            st.session_state.need_password = True
+        else:
+            st.session_state.project_selected = True
+            st.session_state.selected_project = selected
         st.rerun()
+
+    if st.session_state.get('need_password', False):
+        password = st.text_input("请输入密码",
+                               type="password",
+                               key="password_input")
+        if st.button("验证密码"):
+            if password == "123456":
+                st.session_state.project_selected = True
+                st.session_state.selected_project = st.session_state.temp_selected_project
+                # 清除临时状态
+                keys_to_remove = ['need_password', 'temp_selected_project']
+                for key in keys_to_remove:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                st.rerun()
+            else:
+                st.error("密码错误，请重新输入")
+    # ========== 密码验证结束 ==========
+
+def show_data_panel(df, project):
+    st.title(f"{project} - 发货数据")
+
+    col1, col2 = st.columns([1, 5])
+    with col1:
+        if st.button("🔄 刷新数据"):
+            st.cache_data.clear()
+            st.rerun()
+    with col2:
+        # ========== 返回时清除密码状态 ==========
+        if st.button("← 返回"):
+            st.session_state.project_selected = False
+            keys_to_remove = ['need_password', 'temp_selected_project']
+            for key in keys_to_remove:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.rerun()
 
 
 def display_metrics_cards(filtered_df):
@@ -375,7 +436,6 @@ def display_metrics_cards(filtered_df):
 def show_logistics_tab(project):
     st.subheader("🚛 钢材物流明细管理")
 
-    # 日期筛选器
     col1, col2 = st.columns(2)
     with col1:
         logistics_start_date = st.date_input(
@@ -394,18 +454,12 @@ def show_logistics_tab(project):
         st.error("结束日期不能早于开始日期")
         return
 
-    # 加载并合并物流数据
     logistics_df = load_logistics_data()
-
-    # 根据选择项目过滤数据
     if project != "中铁物贸成都分公司":
         logistics_df = logistics_df[logistics_df["项目部"] == project]
 
     if not logistics_df.empty:
-        # 合并状态数据
         logistics_df = merge_logistics_with_status(logistics_df)
-
-        # 应用日期筛选
         mask = (
                 (logistics_df["交货时间"].dt.date >= logistics_start_date) &
                 (logistics_df["交货时间"].dt.date <= logistics_end_date)
@@ -414,56 +468,44 @@ def show_logistics_tab(project):
 
         st.caption(f"显示 {logistics_start_date} 至 {logistics_end_date} 的数据（共 {len(filtered_df)} 条记录）")
 
-        # 显示数据编辑器
         edited_df = st.data_editor(
             filtered_df.drop(columns=["record_id"]),
             use_container_width=True,
+            hide_index=True,
             column_config={
                 "到货状态": st.column_config.SelectboxColumn(
                     "到货状态",
-                    help="更新物资到货状态",
                     options=AppConfig.STATUS_OPTIONS,
+                    default="",  # 明确设置默认值为空字符串
                     required=False,
-                    width="medium"
+                    width="small"
                 ),
-                **{
-                    col: st.column_config.Column(disabled=True)
-                    for col in filtered_df.columns
-                    if col not in ["到货状态", "record_id"]
-                }
+                **{col: {"width": "auto"} for col in filtered_df.columns if col != "到货状态"}
             },
             key=f"logistics_editor_{project}"
         )
 
-        # 检查状态变更
-        if not filtered_df.empty and 'logistics_editor_' + project in st.session_state:
-            changed_indices = [
-                i for i, (orig, new) in enumerate(zip(
-                    filtered_df["到货状态"],
-                    st.session_state['logistics_editor_' + project]['edited_rows'].values()
-                )) if orig != new.get("到货状态", orig)
-            ]
+        if 'logistics_editor_' + project in st.session_state:
+            changed_rows = st.session_state['logistics_editor_' + project]['edited_rows']
 
-            if changed_indices:
-                if st.button("💾 保存状态变更", type="primary"):
-                    success_count = 0
-                    for idx in changed_indices:
-                        record_id = filtered_df.iloc[idx]["record_id"]
-                        new_status = edited_df.iloc[idx]["到货状态"]
-                        original_row = filtered_df.iloc[idx]
+            # Step 1: 收集需要处理的行索引
+            rows_to_process = []
+            for row_index, changes in changed_rows.items():
+                if "到货状态" in changes:
+                    rows_to_process.append(row_index)
 
-                        if update_logistics_status(record_id, new_status, original_row):
-                            success_count += 1
+            # Step 2: 处理收集到的行
+            for row_index in rows_to_process:
+                changes = changed_rows[row_index]
+                record_id = filtered_df.iloc[row_index]["record_id"]
+                new_status = changes["到货状态"]
+                original_row = filtered_df.iloc[row_index]
 
-                    if success_count > 0:
-                        st.success(f"成功更新 {success_count} 条记录的状态")
-                        # 清除缓存强制刷新
-                        st.cache_data.clear()
-                        st.rerun()
-                    else:
-                        st.error("状态更新失败")
+                if update_logistics_status(record_id, new_status, original_row):
+                    st.toast(f"已自动保存状态更新：{original_row['物资名称']}", icon="✅")
 
-        # 显示状态最后更新时间
+                del st.session_state['logistics_editor_' + project]['edited_rows'][row_index]
+
         status_df = load_logistics_status()
         if not status_df.empty:
             last_update = pd.to_datetime(status_df["update_time"]).max()
@@ -497,7 +539,6 @@ def show_data_panel(df, project):
         if start_date > end_date:
             st.error("日期范围无效")
         else:
-            # 根据选择项目过滤数据
             filtered_df = df if project == "中铁物贸成都分公司" else df[df[AppConfig.PROJECT_COLUMN] == project]
             date_range_df = filtered_df[
                 (filtered_df["下单时间"].dt.date >= start_date) &
