@@ -9,6 +9,7 @@ import streamlit as st
 import requests
 import hashlib
 import json
+import plotly.express as px
 
 
 # ==================== 系统配置 ====================
@@ -37,10 +38,8 @@ class AppConfig:
     LOGISTICS_DATE_RANGE_DAYS = 5
 
     LOGISTICS_STATUS_FILE = "logistics_status.csv"
-    STATUS_OPTIONS = [ "已到货", "未到货"]
+    STATUS_OPTIONS = ["已到货", "未到货"]
     PROJECT_COLUMN = "项目部名称"
-
-
 
     CARD_STYLES = {
         "hover_shadow": "0 8px 16px rgba(0,0,0,0.2)",
@@ -56,6 +55,20 @@ class AppConfig:
             @keyframes countup {
                 from { opacity: 0; transform: translateY(10px); }
                 to { opacity: 1; transform: translateY(0); }
+            }
+        """,
+        "floating_animation": """
+            @keyframes floating {
+                0% { transform: translateY(0px); }
+                50% { transform: translateY(-10px); }
+                100% { transform: translateY(0px); }
+            }
+        """,
+        "pulse_animation": """
+            @keyframes pulse {
+                0% { transform: scale(1); }
+                50% { transform: scale(1.05); }
+                100% { transform: scale(1); }
             }
         """
     }
@@ -73,6 +86,8 @@ def apply_card_styles():
     st.markdown(f"""
     <style>
         {AppConfig.CARD_STYLES['number_animation']}
+        {AppConfig.CARD_STYLES['floating_animation']}
+        {AppConfig.CARD_STYLES['pulse_animation']}
 
         .metric-container {{ 
             display: grid; 
@@ -106,6 +121,57 @@ def apply_card_styles():
         .status-arrived {{ background-color: #ddffdd !important; }}
         .status-not-arrived {{ background-color: #ffdddd !important; }}
         .status-empty {{ background-color: transparent !important; }}
+
+        /* 新增首页卡片样式 */
+        .home-card {{
+            {AppConfig.CARD_STYLES['glass_effect']}
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            transition: all 0.3s ease;
+            animation: floating 6s ease-in-out infinite;
+        }}
+        .home-card:hover {{
+            animation: pulse 1.5s infinite;
+            box-shadow: {AppConfig.CARD_STYLES['hover_shadow']};
+        }}
+        .home-card-title {{
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin-bottom: 1rem;
+            color: #2c3e50;
+            border-bottom: 2px solid rgba(44, 62, 80, 0.1);
+            padding-bottom: 0.5rem;
+        }}
+        .home-card-content {{
+            font-size: 1rem;
+            line-height: 1.6;
+            color: #555;
+        }}
+        .home-card-icon {{
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+            color: #3498db;
+        }}
+        .project-selector {{
+            margin-top: 2rem;
+            margin-bottom: 2rem;
+        }}
+        .welcome-header {{
+            font-size: 3.3rem;
+            font-family: 'Microsoft YaHei', sans-serif;  /* 修改字体 */
+            font-weight: bold;
+            margin-bottom: 1rem;
+            background: linear-gradient(45deg, #2c3e50, #3498db);
+            -webkit-background-clip: text;
+            color: transparent;
+            text-align: center;
+        }}
+        .welcome-subheader {{
+            font-size: 1.2rem;
+            text-align: center;
+            color: #666;
+            margin-bottom: 2rem;
+        }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -339,8 +405,64 @@ def update_logistics_status(record_id, new_status, original_row=None):
 
 # ==================== 页面组件 ====================
 def show_project_selection(df):
-    st.title("🏗️ 钢筋发货监控系统")
-    st.markdown("**中铁物贸成都分公司**")
+    st.markdown("""
+    <div class="welcome-header">
+        欢迎使用钢筋发货看板系统
+    </div>
+    <div class="welcome-subheader">
+        中铁物贸成都分公司 - 自永项目
+    </div>
+    """, unsafe_allow_html=True)
+
+    # 新增首页卡片
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown("""
+        <div class="home-card">
+            <div class="home-card-icon">🏗️</div>
+            <div class="home-card-title">项目计划监控</div>
+            <div class="home-card-content">
+                监控各项目钢筋发货情况，确保工程进度顺利推进。
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        st.markdown("""
+        <div class="home-card">
+            <div class="home-card-icon">🚚</div>
+            <div class="home-card-title">物流跟踪</div>
+            <div class="home-card-content">
+                跟踪钢材物流到货状态，及时掌握物资到货情况。
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col3:
+        st.markdown("""
+        <div class="home-card">
+            <div class="home-card-icon">📊</div>
+            <div class="home-card-title">数据分析</div>
+            <div class="home-card-content">
+                提供数据可视化分析，辅助决策和资源调配。
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # 新增系统状态卡片
+    if not df.empty:
+        total_demand = df["需求量"].sum()
+        total_shipped = df["已发量"].sum()
+        pending = total_demand - total_shipped
+        overdue = len(df[df["超期天数"] > 0])
+
+        st.markdown("""        
+
+        """.format(total_demand, total_shipped, pending, overdue), unsafe_allow_html=True)
+
+    # 项目部选择器
+    st.markdown('<div class="project-selector">', unsafe_allow_html=True)
 
     logistics_df = load_logistics_data()
     valid_projects = sorted([p for p in logistics_df["项目部"].unique() if p != ""])
@@ -363,8 +485,8 @@ def show_project_selection(df):
 
     if st.session_state.get('need_password', False):
         password = st.text_input("请输入密码",
-                               type="password",
-                               key="password_input")
+                                 type="password",
+                                 key="password_input")
         if st.button("验证密码"):
             if password == "123456":
                 st.session_state.project_selected = True
@@ -377,7 +499,9 @@ def show_project_selection(df):
                 st.rerun()
             else:
                 st.error("密码错误，请重新输入")
-    # ========== 密码验证结束 ==========
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
 
 def show_data_panel(df, project):
     st.title(f"{project} - 发货数据")
