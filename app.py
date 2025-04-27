@@ -9,7 +9,6 @@ import streamlit as st
 import requests
 import hashlib
 import json
-import plotly.express as px
 
 
 # ==================== 系统配置 ====================
@@ -122,7 +121,6 @@ def apply_card_styles():
         .status-not-arrived {{ background-color: #ffdddd !important; }}
         .status-empty {{ background-color: transparent !important; }}
 
-        /* 新增首页卡片样式 */
         .home-card {{
             {AppConfig.CARD_STYLES['glass_effect']}
             padding: 1.5rem;
@@ -157,8 +155,7 @@ def apply_card_styles():
             margin-bottom: 2rem;
         }}
         .welcome-header {{
-            font-size: 3.3rem;
-            font-family: 'Microsoft YaHei', sans-serif;  /* 修改字体 */
+            font-size: 2.5rem;
             font-weight: bold;
             margin-bottom: 1rem;
             background: linear-gradient(45deg, #2c3e50, #3498db);
@@ -233,7 +230,7 @@ def send_feishu_notification(material_info):
 
 
 # ==================== 数据加载 ====================
-@st.cache_data(ttl=10)
+@st.cache_data(ttl=3600)
 def load_data():
     def safe_convert_to_numeric(series, default=0):
         str_series = series.astype(str)
@@ -286,7 +283,7 @@ def load_data():
         return pd.DataFrame()
 
 
-@st.cache_data(ttl=10)
+@st.cache_data(ttl=3600)
 def load_logistics_data():
     data_path = find_data_file()
     if not data_path:
@@ -354,19 +351,17 @@ def merge_logistics_with_status(logistics_df):
         how="left",
         suffixes=("", "_status")
     )
-    merged["到货状态"] = merged["到货状态_status"].fillna("")  # 使用空字符串填充
+    merged["到货状态"] = merged["到货状态_status"].fillna("")
     return merged.drop(columns=["到货状态_status"])
 
 
 def update_logistics_status(record_id, new_status, original_row=None):
     status_df = load_logistics_status()
 
-    # 修复点：处理 None 值和类型转换
     if new_status is None:
         new_status = ""
-    new_status = str(new_status).strip()  # 确保转换为字符串
+    new_status = str(new_status).strip()
 
-    # 后续代码保持不变...
     send_notification = False
     if new_status == "未到货":
         existing_status = status_df.loc[status_df["record_id"] == record_id, "到货状态"]
@@ -404,159 +399,6 @@ def update_logistics_status(record_id, new_status, original_row=None):
 
 
 # ==================== 页面组件 ====================
-def show_project_selection(df):
-    st.markdown("""
-    <div class="welcome-header">
-        欢迎使用钢筋发货看板系统
-    </div>
-    <div class="welcome-subheader">
-        中铁物贸成都分公司 - 自永项目
-    </div>
-    """, unsafe_allow_html=True)
-
-    # 新增首页卡片
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.markdown("""
-        <div class="home-card">
-            <div class="home-card-icon">🏗️</div>
-            <div class="home-card-title">项目计划监控</div>
-            <div class="home-card-content">
-                监控各项目钢筋发货情况，确保工程进度顺利推进。
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col2:
-        st.markdown("""
-        <div class="home-card">
-            <div class="home-card-icon">🚚</div>
-            <div class="home-card-title">物流跟踪</div>
-            <div class="home-card-content">
-                跟踪钢材物流到货状态，及时掌握物资到货情况。
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col3:
-        st.markdown("""
-        <div class="home-card">
-            <div class="home-card-icon">📊</div>
-            <div class="home-card-title">数据分析</div>
-            <div class="home-card-content">
-                提供数据可视化分析，辅助决策和资源调配。
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # 新增系统状态卡片
-    if not df.empty:
-        total_demand = df["需求量"].sum()
-        total_shipped = df["已发量"].sum()
-        pending = total_demand - total_shipped
-        overdue = len(df[df["超期天数"] > 0])
-
-        st.markdown("""        
-
-        """.format(total_demand, total_shipped, pending, overdue), unsafe_allow_html=True)
-
-    # 项目部选择器
-    st.markdown('<div class="project-selector">', unsafe_allow_html=True)
-
-    logistics_df = load_logistics_data()
-    valid_projects = sorted([p for p in logistics_df["项目部"].unique() if p != ""])
-
-    selected = st.selectbox(
-        "选择项目部",
-        ["中铁物贸成都分公司"] + valid_projects,
-        key="project_selector"
-    )
-
-    # ========== 新增密码验证逻辑 ==========
-    if st.button("确认进入", type="primary"):
-        if selected == "中铁物贸成都分公司":
-            st.session_state.temp_selected_project = selected
-            st.session_state.need_password = True
-        else:
-            st.session_state.project_selected = True
-            st.session_state.selected_project = selected
-        st.rerun()
-
-    if st.session_state.get('need_password', False):
-        password = st.text_input("请输入密码",
-                                 type="password",
-                                 key="password_input")
-        if st.button("验证密码"):
-            if password == "123456":
-                st.session_state.project_selected = True
-                st.session_state.selected_project = st.session_state.temp_selected_project
-                # 清除临时状态
-                keys_to_remove = ['need_password', 'temp_selected_project']
-                for key in keys_to_remove:
-                    if key in st.session_state:
-                        del st.session_state[key]
-                st.rerun()
-            else:
-                st.error("密码错误，请重新输入")
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-
-def show_data_panel(df, project):
-    st.title(f"{project} - 发货数据")
-
-    col1, col2 = st.columns([1, 5])
-    with col1:
-        if st.button("🔄 刷新数据"):
-            st.cache_data.clear()
-            st.rerun()
-    with col2:
-        # ========== 返回时清除密码状态 ==========
-        if st.button("← 返回"):
-            st.session_state.project_selected = False
-            keys_to_remove = ['need_password', 'temp_selected_project']
-            for key in keys_to_remove:
-                if key in st.session_state:
-                    del st.session_state[key]
-            st.rerun()
-
-
-def display_metrics_cards(filtered_df):
-    if filtered_df.empty:
-        return
-
-    total = int(filtered_df["需求量"].sum())
-    shipped = int(filtered_df["已发量"].sum())
-    pending = int(filtered_df["剩余量"].sum())
-    overdue = len(filtered_df[filtered_df["超期天数"] > 0])
-    max_overdue = filtered_df["超期天数"].max() if overdue > 0 else 0
-
-    st.markdown('<div class="metric-container">', unsafe_allow_html=True)
-    cols = st.columns(4)
-    metrics = [
-        ("📦", "总需求量", f"{total:,}", "吨", "total"),
-        ("🚚", "已发货量", f"{shipped:,}", "吨", "shipped"),
-        ("⏳", "待发货量", f"{pending:,}", "吨", "pending"),
-        ("⚠️", "超期订单", f"{overdue}", "单", "overdue", f"最大超期: {max_overdue}天" if overdue > 0 else "")
-    ]
-
-    for idx, metric in enumerate(metrics):
-        with cols[idx]:
-            st.markdown(f"""
-            <div class="metric-card {metric[4]}">
-                <div style="display:flex; align-items:center; gap:0.5rem;">
-                    <span style="font-size:1.2rem">{metric[0]}</span>
-                    <span style="font-weight:600">{metric[1]}</span>
-                </div>
-                <div class="card-value">{metric[2]}</div>
-                <div class="card-unit">{metric[3]}</div>
-                {f'<div style="font-size:0.8rem; color:#666;">{metric[5]}</div>' if len(metric) > 5 else ''}
-            </div>
-            """, unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-
 def show_logistics_tab(project):
     st.subheader("🚛 钢材物流明细管理")
 
@@ -600,7 +442,7 @@ def show_logistics_tab(project):
                 "到货状态": st.column_config.SelectboxColumn(
                     "到货状态",
                     options=AppConfig.STATUS_OPTIONS,
-                    default="",  # 明确设置默认值为空字符串
+                    default="",
                     required=False,
                     width="small"
                 ),
@@ -611,14 +453,11 @@ def show_logistics_tab(project):
 
         if 'logistics_editor_' + project in st.session_state:
             changed_rows = st.session_state['logistics_editor_' + project]['edited_rows']
-
-            # Step 1: 收集需要处理的行索引
             rows_to_process = []
             for row_index, changes in changed_rows.items():
                 if "到货状态" in changes:
                     rows_to_process.append(row_index)
 
-            # Step 2: 处理收集到的行
             for row_index in rows_to_process:
                 changes = changed_rows[row_index]
                 record_id = filtered_df.iloc[row_index]["record_id"]
@@ -636,6 +475,125 @@ def show_logistics_tab(project):
             st.caption(f"状态最后更新时间: {last_update.strftime('%Y-%m-%d %H:%M:%S')}")
     else:
         st.info("指定日期范围内无物流数据")
+
+
+def display_metrics_cards(filtered_df):
+    if filtered_df.empty:
+        return
+
+    total = int(filtered_df["需求量"].sum())
+    shipped = int(filtered_df["已发量"].sum())
+    pending = int(filtered_df["剩余量"].sum())
+    overdue = len(filtered_df[filtered_df["超期天数"] > 0])
+    max_overdue = filtered_df["超期天数"].max() if overdue > 0 else 0
+
+    st.markdown('<div class="metric-container">', unsafe_allow_html=True)
+    cols = st.columns(4)
+    metrics = [
+        ("📦", "总需求量", f"{total:,}", "吨", "total"),
+        ("🚚", "已发货量", f"{shipped:,}", "吨", "shipped"),
+        ("⏳", "待发货量", f"{pending:,}", "吨", "pending"),
+        ("⚠️", "超期订单", f"{overdue}", "单", "overdue", f"最大超期: {max_overdue}天" if overdue > 0 else "")
+    ]
+
+    for idx, metric in enumerate(metrics):
+        with cols[idx]:
+            st.markdown(f"""
+            <div class="metric-card {metric[4]}">
+                <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <span style="font-size:1.2rem">{metric[0]}</span>
+                    <span style="font-weight:600">{metric[1]}</span>
+                </div>
+                <div class="card-value">{metric[2]}</div>
+                <div class="card-unit">{metric[3]}</div>
+                {f'<div style="font-size:0.8rem; color:#666;">{metric[5]}</div>' if len(metric) > 5 else ''}
+            </div>
+            """, unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+def show_project_selection(df):
+    st.markdown("""
+    <div class="welcome-header">
+        欢迎使用钢筋发货监控系统
+    </div>
+    <div class="welcome-subheader">
+        中铁物贸成都分公司 - 四川物供中心
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown("""
+        <div class="home-card">
+            <div class="home-card-icon">🏗️</div>
+            <div class="home-card-title">项目监控</div>
+            <div class="home-card-content">
+                实时监控各项目钢筋发货情况，确保工程进度顺利推进。
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        st.markdown("""
+        <div class="home-card">
+            <div class="home-card-icon">🚚</div>
+            <div class="home-card-title">物流跟踪</div>
+            <div class="home-card-content">
+                跟踪钢材物流状态，及时掌握物资到货情况。
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col3:
+        st.markdown("""
+        <div class="home-card">
+            <div class="home-card-icon">📊</div>
+            <div class="home-card-title">数据分析</div>
+            <div class="home-card-content">
+                提供数据可视化分析，辅助决策和资源调配。
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown('<div class="project-selector">', unsafe_allow_html=True)
+
+    logistics_df = load_logistics_data()
+    valid_projects = sorted([p for p in logistics_df["项目部"].unique() if p != ""])
+
+    selected = st.selectbox(
+        "选择项目部",
+        ["中铁物贸成都分公司"] + valid_projects,
+        key="project_selector"
+    )
+
+    if st.button("确认进入", type="primary"):
+        if selected == "中铁物贸成都分公司":
+            st.session_state.temp_selected_project = selected
+            st.session_state.need_password = True
+        else:
+            st.session_state.project_selected = True
+            st.session_state.selected_project = selected
+        st.rerun()
+
+    if st.session_state.get('need_password', False):
+        password = st.text_input("请输入密码",
+                                 type="password",
+                                 key="password_input")
+        if st.button("验证密码"):
+            if password == "123456":
+                st.session_state.project_selected = True
+                st.session_state.selected_project = st.session_state.temp_selected_project
+                keys_to_remove = ['need_password', 'temp_selected_project']
+                for key in keys_to_remove:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                st.rerun()
+            else:
+                st.error("密码错误，请重新输入")
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 def show_data_panel(df, project):
