@@ -1,8 +1,0 @@
-测试日志
-检测到文件变更：f2fe977f5d4bb2f2975d0f572deb95824c96a588f6ae2fe6fa012ee95716c8b4 -> f2fe977f5d4bb2f2975d0f572deb95824c96a588f6ae2fe6fa012ee95716c8b4
-=== 自动化推送流程启动 ===
-error: cannot pull with rebase: You have unstaged changes.
-error: Please commit or stash them.
-To github.com:monizhou/shipment-app.git
-   f0eccef..8757539  main -> main
-✅ 推送成功
